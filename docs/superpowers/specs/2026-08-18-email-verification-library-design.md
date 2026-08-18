@@ -37,7 +37,9 @@ key-binding JWT in SD-JWT+KB compact form.
   Signatures.
 - Persist nonces or bind them to application sessions; the application owns
   nonce generation, storage, expiry, and one-time use.
-- Add caching, retry policies, logging, telemetry, or framework integrations.
+- Implement caching, retry policies, logging, telemetry, or framework
+  integrations. The API retains explicit seams for applications or a future
+  package version to add caching without changing verification behavior.
 - Verify that an email address can receive mail.
 
 ## Runtime and dependencies
@@ -46,6 +48,13 @@ The package is ESM-only and supports modern server runtimes that implement the
 Node DNS promises API and Fetch API. It uses `node:dns/promises.resolveTxt` and
 global `fetch` by default. Both can be replaced per call for testing or runtime
 integration.
+
+The injected DNS and Fetch functions may be memoizing wrappers. DNS delegation,
+issuer metadata, and JWKS stages also return immutable data without hidden
+process state, so a later version can add a cache adapter to the options object
+without changing existing calls or coupling cryptographic verification to cache
+storage. This version does not choose cache keys, lifetimes, or invalidation
+policy on behalf of applications.
 
 There are exactly three direct runtime dependencies:
 
@@ -117,15 +126,15 @@ failed `Result`, not an exception.
 The primary function is:
 
 ```ts
-export async function verifyEmailVerificationToken(
-  input: VerifyEmailVerificationTokenInput,
+export async function verifyEmailToken(
+  input: VerifyEmailTokenInput,
 ): Promise<Result<VerifiedEmail>>;
 ```
 
 Required input properties are:
 
 ```ts
-type VerifyEmailVerificationTokenInput = {
+type VerifyEmailTokenInput = {
   token: string;
   nonce: string;
   email: string;
