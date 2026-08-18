@@ -224,7 +224,8 @@ The resolved EVT payload requires:
 - an integer epoch-seconds `iat`
 - a public JWK at `cnf.jwk`
 - a syntactically valid `email`
-- `email_verified: true`
+- a boolean `email_verified`, which the expected-value stage requires to be
+  `true`
 
 The KB protected header requires a nonempty `alg` and `typ: "kb+jwt"`. Its
 payload requires an HTTP(S) origin in `aud`, a nonempty `nonce`, an integer
