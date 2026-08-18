@@ -153,6 +153,11 @@ export const ExpectedValuesValidatedTokenSchema = z.object({
   nowEpochSeconds: epochSeconds,
 });
 
+export const DnsVerifiedTokenSchema = z.object({
+  token: ExpectedValuesValidatedTokenSchema,
+  issuer: nonempty,
+});
+
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
 export type EvtHeader = z.infer<typeof EvtHeaderSchema>;
 export type EvtRawClaims = z.infer<typeof EvtRawClaimsSchema>;
@@ -163,3 +168,4 @@ export type ParsedToken = z.infer<typeof ParsedTokenSchema>;
 export type ExpectedValuesValidatedToken = z.infer<
   typeof ExpectedValuesValidatedTokenSchema
 >;
+export type DnsVerifiedToken = z.infer<typeof DnsVerifiedTokenSchema>;
