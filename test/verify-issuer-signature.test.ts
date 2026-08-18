@@ -810,6 +810,58 @@ void describe("verifyIssuerSignature", () => {
     assert.deepEqual(network.calls, []);
   });
 
+  void it("contains hostile nested extension claims during invariant comparison", async () => {
+    const fixture = await createTokenFixture();
+    const rebuilt = await fixture.rebuildToken({
+      evtPayload: {
+        iss: fixture.issuer,
+        iat: fixture.evtIssuedAt,
+        cnf: { jwk: fixture.holderPublicJwk },
+        email: fixture.email,
+        email_verified: true,
+        example_extension: { value: "signed" },
+      },
+    });
+    const token = await createDnsVerifiedToken(rebuilt.token, fixture);
+    const hostileExtension = new Proxy(
+      { value: "forged" },
+      {
+        get() {
+          throw new Error("extension unavailable");
+        },
+      },
+    );
+    const hostileToken = {
+      ...token,
+      token: {
+        ...token.token,
+        token: {
+          ...token.token.token,
+          evt: {
+            ...token.token.token.evt,
+            rawClaims: {
+              ...token.token.token.evt.rawClaims,
+              example_extension: hostileExtension,
+            },
+            claims: {
+              ...token.token.token.evt.claims,
+              example_extension: hostileExtension,
+            },
+          },
+        },
+      },
+    };
+    const network = createFetchFixture(validRoutes(fixture.issuerPublicJwk));
+
+    const result = await verifyIssuerSignature({
+      token: hostileToken,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "INVALID_INPUT");
+    assert.deepEqual(network.calls, []);
+  });
+
   void it("preserves expected-value and DNS invariants after reparsing", async () => {
     const { fixture, token } = await createDnsVerifiedFixture();
     const fabricatedTokens = [

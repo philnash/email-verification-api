@@ -298,10 +298,20 @@ async function reparseDnsVerifiedToken(
     );
   }
 
-  if (
-    !parsedResult.ok ||
-    !isDeepStrictEqual(parsedResult.value, token.token.token)
-  ) {
+  if (!parsedResult.ok) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The parsed token does not match the exact token presentation.",
+    );
+  }
+
+  const parsedTokenMatches = safeDeepStrictEqual(
+    parsedResult.value,
+    token.token.token,
+    "The parsed token could not be compared safely with the exact token presentation.",
+  );
+  if (!parsedTokenMatches.ok) return parsedTokenMatches;
+  if (!parsedTokenMatches.value) {
     return issuerError(
       "INVALID_INPUT",
       "The parsed token does not match the exact token presentation.",
@@ -317,10 +327,20 @@ async function reparseDnsVerifiedToken(
     clockToleranceSeconds: token.token.clockToleranceSeconds,
     now: () => token.token.nowEpochSeconds * 1_000,
   });
-  if (
-    !expectedValuesResult.ok ||
-    !isDeepStrictEqual(expectedValuesResult.value, token.token)
-  ) {
+  if (!expectedValuesResult.ok) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The reparsed token does not preserve expected-value validation.",
+    );
+  }
+
+  const expectedValuesMatch = safeDeepStrictEqual(
+    expectedValuesResult.value,
+    token.token,
+    "Expected-value invariants could not be compared safely.",
+  );
+  if (!expectedValuesMatch.ok) return expectedValuesMatch;
+  if (!expectedValuesMatch.value) {
     return issuerError(
       "INVALID_INPUT",
       "The reparsed token does not preserve expected-value validation.",
@@ -355,6 +375,18 @@ async function reparseDnsVerifiedToken(
       "The reparsed DNS-verified token could not be represented safely.",
       cause,
     );
+  }
+}
+
+function safeDeepStrictEqual(
+  left: unknown,
+  right: unknown,
+  message: string,
+): Result<boolean> {
+  try {
+    return ok(isDeepStrictEqual(left, right));
+  } catch (cause) {
+    return issuerError("INVALID_INPUT", message, cause);
   }
 }
 
