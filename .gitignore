@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.test-dist/
+coverage/
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

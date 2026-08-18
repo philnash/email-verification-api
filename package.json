@@ -1,0 +1,46 @@
+{
+  "name": "email-verification",
+  "version": "0.1.0",
+  "description": "Verify Email Verification Protocol EVT+KB tokens",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "clean:test": "node --eval \"import('node:fs').then(({ rmSync }) => rmSync('.test-dist', { recursive: true, force: true }))\"",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test:compile": "npm run clean:test && tsc -p tsconfig.test.json",
+    "test": "npm run test:compile && node --test .test-dist/test/*.test.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run typecheck && npm run lint && npm run build && npm test"
+  },
+  "dependencies": {
+    "@sd-jwt/core": "^0.20.0",
+    "jose": "^6.2.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0"
+  }
+}
