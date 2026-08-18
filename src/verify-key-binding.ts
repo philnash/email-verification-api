@@ -14,6 +14,7 @@ import {
   type ParsedToken,
   type PublicJwk,
 } from "./schemas.js";
+import { canonicalIssuer } from "./verify-dns-delegation.js";
 
 const VerifyKeyBindingInputSchema = z.object({
   token: IssuerVerifiedTokenSchema,
@@ -30,19 +31,27 @@ export async function verifyKeyBinding(
   if (!parsedTokenResult.ok) return parsedTokenResult;
   const parsedToken = parsedTokenResult.value;
 
-  const authenticatedTokenResult = rebuildWithParsedToken(token, parsedToken);
-  if (!authenticatedTokenResult.ok) return authenticatedTokenResult;
-  const authenticatedToken = authenticatedTokenResult.value;
-
   const signatureResult = await verifyHolderSignature(parsedToken);
   if (!signatureResult.ok) return signatureResult;
 
   const hashResult = await verifyPresentationHash(parsedToken);
   if (!hashResult.ok) return hashResult;
 
+  const issuerResult = canonicalAuthenticatedIssuer(parsedToken);
+  if (!issuerResult.ok) return issuerResult;
+  const audienceResult = canonicalAuthenticatedAudience(parsedToken);
+  if (!audienceResult.ok) return audienceResult;
+
   try {
     const result = KeyBindingVerifiedTokenSchema.safeParse({
-      token: authenticatedToken,
+      email: parsedToken.evt.claims.email,
+      issuer: issuerResult.value,
+      audience: audienceResult.value,
+      issuedAt: {
+        evt: parsedToken.evt.claims.iat,
+        keyBinding: parsedToken.kb.claims.iat,
+      },
+      claims: parsedToken.evt.claims,
     });
     if (!result.success) {
       return keyBindingError(
@@ -121,39 +130,37 @@ async function reparseExactToken(
   return ok(parsedResult.value);
 }
 
-function rebuildWithParsedToken(
-  token: IssuerVerifiedToken,
-  parsedToken: ParsedToken,
-): Result<IssuerVerifiedToken> {
-  try {
-    const result = IssuerVerifiedTokenSchema.safeParse({
-      metadata: token.metadata,
-      token: {
-        issuer: token.token.issuer,
-        token: {
-          audience: token.token.token.audience,
-          clockToleranceSeconds: token.token.token.clockToleranceSeconds,
-          email: token.token.token.email,
-          maxTokenAgeSeconds: token.token.token.maxTokenAgeSeconds,
-          nowEpochSeconds: token.token.token.nowEpochSeconds,
-          token: parsedToken,
-        },
-      },
-    });
-    if (!result.success) {
-      return keyBindingError(
-        "INVALID_INPUT",
-        "The issuer-verified token could not be rebuilt from its exact presentation.",
-      );
-    }
-    return ok(result.data);
-  } catch (cause) {
+function canonicalAuthenticatedIssuer(token: ParsedToken): Result<string> {
+  const result = canonicalIssuer(token.evt.claims.iss);
+  if (!result.ok) {
     return keyBindingError(
       "INVALID_INPUT",
-      "The issuer-verified token could not be rebuilt from its exact presentation.",
-      cause,
+      "The authenticated EVT issuer is invalid.",
     );
   }
+  return result;
+}
+
+function canonicalAuthenticatedAudience(token: ParsedToken): Result<string> {
+  try {
+    const audience = new URL(token.kb.claims.aud);
+    if (
+      (audience.protocol !== "https:" && audience.protocol !== "http:") ||
+      audience.href !== `${audience.origin}/`
+    ) {
+      return invalidAuthenticatedAudience();
+    }
+    return ok(audience.origin);
+  } catch {
+    return invalidAuthenticatedAudience();
+  }
+}
+
+function invalidAuthenticatedAudience(): Result<never> {
+  return keyBindingError(
+    "INVALID_INPUT",
+    "The authenticated KB-JWT audience is not an HTTP(S) origin.",
+  );
 }
 
 async function verifyHolderSignature(

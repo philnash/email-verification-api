@@ -18,6 +18,20 @@ const jwksUrl = "https://keys.accounts.example.com/email-verification/jwks";
 
 type TokenFixture = Awaited<ReturnType<typeof createTokenFixture>>;
 
+function expectedKeyBindingValue(token: IssuerVerifiedToken) {
+  const parsedToken = token.token.token.token;
+  return {
+    email: parsedToken.evt.claims.email,
+    issuer: "accounts.example.com",
+    audience: parsedToken.kb.claims.aud,
+    issuedAt: {
+      evt: parsedToken.evt.claims.iat,
+      keyBinding: parsedToken.kb.claims.iat,
+    },
+    claims: parsedToken.evt.claims,
+  };
+}
+
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), {
     headers: { "content-type": "application/json" },
@@ -112,10 +126,81 @@ void describe("verifyKeyBinding", () => {
       const result = await verifyKeyBinding({ token: issuerVerified });
 
       assert.equal(result.ok, true);
-      assert.deepEqual(result.value, { token: issuerVerified });
-      const holderJwk = result.value.token.token.token.token.evt.claims.cnf.jwk;
+      assert.deepEqual(result.value, expectedKeyBindingValue(issuerVerified));
+      const holderJwk = result.value.claims.cnf.jwk;
       assert.equal("d" in holderJwk, false);
       assert.equal("k" in holderJwk, false);
+    });
+  }
+
+  const predecessorMutations: readonly {
+    name: string;
+    mutate: (token: IssuerVerifiedToken) => void;
+  }[] = [
+    {
+      name: "expected email",
+      mutate: (token) => {
+        token.token.token.email = "attacker@example.com";
+      },
+    },
+    {
+      name: "expected audience",
+      mutate: (token) => {
+        token.token.token.audience = "https://attacker.example.com";
+      },
+    },
+    {
+      name: "DNS issuer",
+      mutate: (token) => {
+        token.token.issuer = "attacker.example.com";
+      },
+    },
+    {
+      name: "maximum token age",
+      mutate: (token) => {
+        token.token.token.maxTokenAgeSeconds += 1;
+      },
+    },
+    {
+      name: "clock tolerance",
+      mutate: (token) => {
+        token.token.token.clockToleranceSeconds += 1;
+      },
+    },
+    {
+      name: "validation clock",
+      mutate: (token) => {
+        token.token.token.nowEpochSeconds += 1;
+      },
+    },
+    {
+      name: "metadata issuance endpoint",
+      mutate: (token) => {
+        token.metadata.issuance_endpoint = "https://attacker.example.com/issue";
+      },
+    },
+    {
+      name: "metadata JWKS endpoint",
+      mutate: (token) => {
+        token.metadata.jwks_uri = "https://attacker.example.com/jwks";
+      },
+    },
+  ];
+
+  for (const predecessorMutation of predecessorMutations) {
+    void it(`does not propagate a mutated predecessor ${predecessorMutation.name}`, async () => {
+      const fixture = await createTokenFixture();
+      const issuerVerified = await createIssuerVerifiedToken(
+        fixture.token,
+        fixture,
+      );
+      const expected = expectedKeyBindingValue(issuerVerified);
+      predecessorMutation.mutate(issuerVerified);
+
+      const result = await verifyKeyBinding({ token: issuerVerified });
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.value, expected);
     });
   }
 

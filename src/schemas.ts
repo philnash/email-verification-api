@@ -177,7 +177,14 @@ export const IssuerVerifiedTokenSchema = z.object({
 });
 
 export const KeyBindingVerifiedTokenSchema = z.object({
-  token: IssuerVerifiedTokenSchema,
+  email: z.email(),
+  issuer: nonempty,
+  audience: z.url(),
+  issuedAt: z.object({
+    evt: epochSeconds,
+    keyBinding: epochSeconds,
+  }),
+  claims: EvtClaimsSchema,
 });
 
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
