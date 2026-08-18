@@ -1,3 +1,4 @@
+import { resolveTxt as defaultResolveTxt } from "node:dns/promises";
 import * as z from "zod";
 
 const base64url = z.base64url().min(1);
@@ -130,9 +131,19 @@ export const ParsedTokenSchema = z.object({
 
 const timingSeconds = z.number().nonnegative();
 const ClockSchema = z
-  .custom<() => unknown>((value) => typeof value === "function")
+  .custom<() => number>((value) => typeof value === "function")
   .optional()
   .transform((value) => value ?? (() => Date.now()));
+
+type FetchFunction = typeof globalThis.fetch;
+type ResolveTxtFunction = typeof defaultResolveTxt;
+
+const FetchSchema = z.custom<FetchFunction>(
+  (value) => typeof value === "function",
+);
+const ResolveTxtSchema = z.custom<ResolveTxtFunction>(
+  (value) => typeof value === "function",
+);
 
 export const ExpectedValuesInputSchema = z.object({
   token: ParsedTokenSchema,
@@ -187,6 +198,22 @@ export const KeyBindingVerifiedTokenSchema = z.object({
   claims: EvtClaimsSchema,
 });
 
+export const VerifyEmailTokenInputSchema = z.object({
+  token: nonempty,
+  nonce: nonempty,
+  email: z.email(),
+  audience: z.url(),
+  maxTokenAgeSeconds: timingSeconds.default(300),
+  clockToleranceSeconds: timingSeconds.default(60),
+  fetch: FetchSchema.optional().transform((value) => value ?? globalThis.fetch),
+  resolveTxt: ResolveTxtSchema.optional().transform(
+    (value) => value ?? defaultResolveTxt,
+  ),
+  now: ClockSchema,
+});
+
+export const VerifiedEmailSchema = KeyBindingVerifiedTokenSchema;
+
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
 export type EvtHeader = z.infer<typeof EvtHeaderSchema>;
 export type EvtRawClaims = z.infer<typeof EvtRawClaimsSchema>;
@@ -204,3 +231,5 @@ export type IssuerVerifiedToken = z.infer<typeof IssuerVerifiedTokenSchema>;
 export type KeyBindingVerifiedToken = z.infer<
   typeof KeyBindingVerifiedTokenSchema
 >;
+export type VerifyEmailTokenInput = z.input<typeof VerifyEmailTokenInputSchema>;
+export type VerifiedEmail = z.infer<typeof VerifiedEmailSchema>;
