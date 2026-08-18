@@ -531,6 +531,89 @@ void describe("verifyIssuerSignature", () => {
     assertIssuerError(result, "JWKS_INVALID");
   });
 
+  void it("rejects eleven duplicate matching keys before verification", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: Array.from({ length: 11 }, () => fixture.issuerPublicJwk),
+        }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "JWKS_INVALID");
+  });
+
+  void it("counts malformed matching keys before JOSE can skip imports", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const malformedKey = { ...fixture.issuerPublicJwk, x: "AA" };
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: [
+            fixture.issuerPublicJwk,
+            ...Array.from({ length: 10 }, () => malformedKey),
+          ],
+        }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "JWKS_INVALID");
+  });
+
+  void it("does not count same-kid keys incompatible with the EVT algorithm", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const incompatibleKey = {
+      kty: "RSA",
+      kid: "issuer-key",
+      e: "AQAB",
+      n: "AQ",
+    };
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: [
+            fixture.issuerPublicJwk,
+            ...Array.from({ length: 10 }, () => incompatibleKey),
+          ],
+        }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("classifies cryptographically invalid matching keys as invalid JWKS", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const malformedKey = { ...fixture.issuerPublicJwk, x: "AA" };
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () => jsonResponse({ keys: [malformedKey] }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "JWKS_INVALID");
+  });
+
   void it("rejects tampered EVT payloads and signatures", async () => {
     const fixture = await createTokenFixture();
     const tamperedPayload = Buffer.from(
@@ -664,6 +747,149 @@ void describe("verifyIssuerSignature", () => {
     ];
 
     for (const result of results) assert.equal(result.ok, false);
+  });
+
+  void it("rejects caller-supplied parsed claims that differ from the compact EVT", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const network = createFetchFixture(validRoutes(fixture.issuerPublicJwk));
+    const fabricatedToken = {
+      ...token,
+      token: {
+        ...token.token,
+        token: {
+          ...token.token.token,
+          evt: {
+            ...token.token.token.evt,
+            claims: {
+              ...token.token.token.evt.claims,
+              email: "attacker@example.com",
+            },
+          },
+        },
+      },
+    };
+
+    const result = await verifyIssuerSignature({
+      token: fabricatedToken,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "INVALID_INPUT");
+    assert.deepEqual(network.calls, []);
+  });
+
+  void it("rejects a caller-supplied holder key that differs from the compact EVT", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const unrelatedFixture = await createTokenFixture();
+    const network = createFetchFixture(validRoutes(fixture.issuerPublicJwk));
+    const fabricatedClaims = {
+      ...token.token.token.evt.claims,
+      cnf: { jwk: unrelatedFixture.holderPublicJwk },
+    };
+    const fabricatedToken = {
+      ...token,
+      token: {
+        ...token.token,
+        token: {
+          ...token.token.token,
+          evt: {
+            ...token.token.token.evt,
+            rawClaims: fabricatedClaims,
+            claims: fabricatedClaims,
+          },
+        },
+      },
+    };
+
+    const result = await verifyIssuerSignature({
+      token: fabricatedToken,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "INVALID_INPUT");
+    assert.deepEqual(network.calls, []);
+  });
+
+  void it("preserves expected-value and DNS invariants after reparsing", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const fabricatedTokens = [
+      {
+        ...token,
+        token: { ...token.token, email: "attacker@example.com" },
+      },
+      { ...token, issuer: "attacker.example.com" },
+    ];
+
+    for (const fabricatedToken of fabricatedTokens) {
+      const network = createFetchFixture(validRoutes(fixture.issuerPublicJwk));
+      const result = await verifyIssuerSignature({
+        token: fabricatedToken,
+        fetch: network.fetch,
+      });
+      assertIssuerError(result, "INVALID_INPUT");
+      assert.deepEqual(network.calls, []);
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in metadata URLs", async () => {
+    const { token } = await createDnsVerifiedFixture();
+    const unsafeUrls = [
+      "https://accounts.exam\tple.com/endpoint",
+      "https://accounts.exam\nple.com/endpoint",
+      "https://accounts.exam\rple.com/endpoint",
+    ];
+
+    for (const url of unsafeUrls) {
+      for (const property of ["issuance_endpoint", "jwks_uri"]) {
+        const network = createFetchFixture({
+          [metadataUrl]: () => jsonResponse(metadata({ [property]: url })),
+        });
+        const result = await verifyIssuerSignature({
+          token,
+          fetch: network.fetch,
+        });
+        assertIssuerError(result, "METADATA_INVALID");
+        assert.deepEqual(network.calls, [metadataUrl]);
+      }
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in response URLs", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const unsafeMetadataResponseUrls = [
+      "https://accounts.exam\tple.com/.well-known/email-verification",
+      "https://accounts.exam\nple.com/.well-known/email-verification",
+      "https://accounts.exam\rple.com/.well-known/email-verification",
+    ];
+
+    for (const responseUrl of unsafeMetadataResponseUrls) {
+      const result = await verifyIssuerSignature({
+        token,
+        fetch: (input: unknown) =>
+          Promise.resolve(
+            input === metadataUrl
+              ? responseWithUrl(metadata(), responseUrl)
+              : jsonResponse({ keys: [fixture.issuerPublicJwk] }),
+          ),
+      });
+      assertIssuerError(result, "METADATA_INVALID");
+    }
+
+    const unsafeJwksResponseUrl =
+      "https://keys.accounts.exam\tple.com/email-verification/jwks";
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        responseWithUrl(
+          { keys: [fixture.issuerPublicJwk] },
+          unsafeJwksResponseUrl,
+        ),
+    });
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+    assertIssuerError(result, "JWKS_INVALID");
   });
 
   void it("rejects a fabricated non-canonical issuer before Fetch", async () => {

@@ -1,11 +1,7 @@
-import {
-  compactVerify,
-  createLocalJWKSet,
-  errors,
-  type JWK,
-  type LocalJWKSet,
-} from "jose";
+import { isDeepStrictEqual } from "node:util";
+import { compactVerify, errors, importJWK, type JWK } from "jose";
 import * as z from "zod";
+import { parseToken } from "./parse-token.js";
 import { err, errorCause, ok, type Result } from "./result.js";
 import {
   DnsVerifiedTokenSchema,
@@ -17,6 +13,7 @@ import {
   type JsonWebKeySet,
   type PublicJwk,
 } from "./schemas.js";
+import { validateExpectedValues } from "./validate-expected-values.js";
 import { canonicalIssuer } from "./verify-dns-delegation.js";
 
 const MAXIMUM_MATCHING_KEYS = 10;
@@ -47,17 +44,22 @@ export async function verifyIssuerSignature(
   const inputResult = parseInput(input);
   if (!inputResult.ok) return inputResult;
 
-  const { token, fetch } = inputResult.value;
-  const canonicalIssuerResult = canonicalIssuer(token.issuer);
+  const { token: inputToken, fetch } = inputResult.value;
+  const canonicalIssuerResult = canonicalIssuer(inputToken.issuer);
   if (
     !canonicalIssuerResult.ok ||
-    canonicalIssuerResult.value !== token.issuer
+    canonicalIssuerResult.value !== inputToken.issuer
   ) {
     return issuerError(
       "INVALID_INPUT",
       "Issuer verification requires a canonical DNS-verified issuer hostname.",
     );
   }
+
+  const authenticatedTokenResult = await reparseDnsVerifiedToken(inputToken);
+  if (!authenticatedTokenResult.ok) return authenticatedTokenResult;
+  const token = authenticatedTokenResult.value;
+
   const metadataUrl = `https://${token.issuer}/.well-known/email-verification`;
 
   const metadataDocument = await fetchJsonDocument({
@@ -94,6 +96,7 @@ export async function verifyIssuerSignature(
   const signatureResult = await verifyEvtSignature(
     token.token.token.evt.compact,
     algorithm,
+    token.token.token.evt.header.kid,
     jwksResult.value,
   );
   if (!signatureResult.ok) return signatureResult;
@@ -246,6 +249,8 @@ function parseJwks(value: unknown): Result<JsonWebKeySet> {
 }
 
 function isIssuerBoundHttpsUrl(value: string, issuer: string): boolean {
+  if (containsAsciiWhitespaceOrControl(value)) return false;
+
   try {
     const url = new URL(value);
     if (
@@ -269,43 +274,179 @@ function isIssuerBoundHttpsUrl(value: string, issuer: string): boolean {
   }
 }
 
-async function verifyEvtSignature(
-  compactEvt: string,
-  algorithm: string,
-  jwks: JsonWebKeySet,
-): Promise<Result<true>> {
-  let issuerKeys: LocalJWKSet;
+function containsAsciiWhitespaceOrControl(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x20 || codePoint === 0x7f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function reparseDnsVerifiedToken(
+  token: z.infer<typeof DnsVerifiedTokenSchema>,
+): Promise<Result<z.infer<typeof DnsVerifiedTokenSchema>>> {
+  let parsedResult: Awaited<ReturnType<typeof parseToken>>;
   try {
-    issuerKeys = createLocalJWKSet({ keys: jwks.keys.map(toJoseJwk) });
+    parsedResult = await parseToken(token.token.token.token);
   } catch (cause) {
     return issuerError(
-      "JWKS_INVALID",
-      "The issuer JWKS could not be used for signature verification.",
+      "INVALID_INPUT",
+      "The exact token presentation could not be parsed safely.",
       cause,
     );
   }
 
+  if (
+    !parsedResult.ok ||
+    !isDeepStrictEqual(parsedResult.value, token.token.token)
+  ) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The parsed token does not match the exact token presentation.",
+    );
+  }
+
+  const expectedValuesResult = validateExpectedValues({
+    token: parsedResult.value,
+    email: token.token.email,
+    nonce: parsedResult.value.kb.claims.nonce,
+    audience: token.token.audience,
+    maxTokenAgeSeconds: token.token.maxTokenAgeSeconds,
+    clockToleranceSeconds: token.token.clockToleranceSeconds,
+    now: () => token.token.nowEpochSeconds * 1_000,
+  });
+  if (
+    !expectedValuesResult.ok ||
+    !isDeepStrictEqual(expectedValuesResult.value, token.token)
+  ) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The reparsed token does not preserve expected-value validation.",
+    );
+  }
+
+  const claimedIssuerResult = canonicalIssuer(
+    parsedResult.value.evt.claims.iss,
+  );
+  if (!claimedIssuerResult.ok || claimedIssuerResult.value !== token.issuer) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The reparsed EVT issuer does not match the DNS-verified issuer.",
+    );
+  }
+
   try {
-    await compactVerify(compactEvt, issuerKeys, {
-      algorithms: [algorithm],
+    const authenticatedResult = DnsVerifiedTokenSchema.safeParse({
+      issuer: claimedIssuerResult.value,
+      token: expectedValuesResult.value,
     });
-    return ok(true);
-  } catch (cause) {
-    if (cause instanceof errors.JWKSMultipleMatchingKeys) {
-      return verifyWithMatchingKeys(compactEvt, algorithm, cause);
+    if (!authenticatedResult.success) {
+      return issuerError(
+        "INVALID_INPUT",
+        "The reparsed DNS-verified token could not be represented safely.",
+      );
     }
-    if (cause instanceof errors.JWKSInvalid) {
+    return ok(authenticatedResult.data);
+  } catch (cause) {
+    return issuerError(
+      "INVALID_INPUT",
+      "The reparsed DNS-verified token could not be represented safely.",
+      cause,
+    );
+  }
+}
+
+async function verifyEvtSignature(
+  compactEvt: string,
+  algorithm: string,
+  keyId: string,
+  jwks: JsonWebKeySet,
+): Promise<Result<true>> {
+  const matchingKeys = jwks.keys.filter((jwk) =>
+    matchesEvtHeader(jwk, algorithm, keyId),
+  );
+  if (matchingKeys.length === 0) {
+    return issuerError(
+      "EVT_SIGNATURE_INVALID",
+      "No issuer key matches the EVT protected header.",
+    );
+  }
+  if (matchingKeys.length > MAXIMUM_MATCHING_KEYS) {
+    return issuerError(
+      "JWKS_INVALID",
+      `More than ${String(MAXIMUM_MATCHING_KEYS)} issuer keys matched the EVT header.`,
+    );
+  }
+
+  const importedKeys: Awaited<ReturnType<typeof importJWK>>[] = [];
+  for (const jwk of matchingKeys) {
+    try {
+      importedKeys.push(await importJWK(toJoseJwk(jwk), algorithm));
+    } catch (cause) {
       return issuerError(
         "JWKS_INVALID",
-        "The issuer JWKS could not be used for signature verification.",
+        "A matching issuer JWK contains invalid cryptographic key material.",
         cause,
       );
     }
-    return issuerError(
-      "EVT_SIGNATURE_INVALID",
-      "The EVT signature could not be verified with an issuer key.",
-      cause,
-    );
+  }
+
+  for (const key of importedKeys) {
+    try {
+      await compactVerify(compactEvt, key, { algorithms: [algorithm] });
+      return ok(true);
+    } catch (cause) {
+      if (cause instanceof errors.JWSSignatureVerificationFailed) continue;
+      return issuerError(
+        "JWKS_INVALID",
+        "A matching issuer key could not be used safely.",
+        cause,
+      );
+    }
+  }
+
+  return issuerError(
+    "EVT_SIGNATURE_INVALID",
+    "No matching issuer key verified the EVT signature.",
+  );
+}
+
+function matchesEvtHeader(
+  jwk: PublicJwk,
+  algorithm: string,
+  keyId: string,
+): boolean {
+  return (
+    isAlgorithmCompatibleJwk(jwk, algorithm) &&
+    jwk.kid === keyId &&
+    (jwk.alg === undefined || jwk.alg === algorithm) &&
+    (jwk.use === undefined || jwk.use === "sig") &&
+    (jwk.key_ops === undefined || jwk.key_ops.includes("verify"))
+  );
+}
+
+function isAlgorithmCompatibleJwk(jwk: PublicJwk, algorithm: string): boolean {
+  switch (algorithm) {
+    case "RS256":
+    case "RS384":
+    case "RS512":
+    case "PS256":
+    case "PS384":
+    case "PS512":
+      return jwk.kty === "RSA";
+    case "ES256":
+      return jwk.kty === "EC" && jwk.crv === "P-256";
+    case "ES384":
+      return jwk.kty === "EC" && jwk.crv === "P-384";
+    case "ES512":
+      return jwk.kty === "EC" && jwk.crv === "P-521";
+    case "EdDSA":
+    case "Ed25519":
+      return jwk.kty === "OKP" && jwk.crv === "Ed25519";
+    default:
+      return false;
   }
 }
 
@@ -327,49 +468,6 @@ function toJoseJwk(jwk: PublicJwk): JWK {
     case "OKP":
       return { ...common, crv: jwk.crv, x: jwk.x };
   }
-}
-
-async function verifyWithMatchingKeys(
-  compactEvt: string,
-  algorithm: string,
-  matchingKeys: errors.JWKSMultipleMatchingKeys,
-): Promise<Result<true>> {
-  let attempts = 0;
-
-  try {
-    for await (const key of matchingKeys) {
-      if (attempts === MAXIMUM_MATCHING_KEYS) {
-        return issuerError(
-          "JWKS_INVALID",
-          `More than ${String(MAXIMUM_MATCHING_KEYS)} issuer keys matched the EVT header.`,
-        );
-      }
-      attempts += 1;
-
-      try {
-        await compactVerify(compactEvt, key, { algorithms: [algorithm] });
-        return ok(true);
-      } catch (cause) {
-        if (cause instanceof errors.JWSSignatureVerificationFailed) continue;
-        return issuerError(
-          "JWKS_INVALID",
-          "A matching issuer key could not be used safely.",
-          cause,
-        );
-      }
-    }
-  } catch (cause) {
-    return issuerError(
-      "JWKS_INVALID",
-      "Matching issuer keys could not be read safely.",
-      cause,
-    );
-  }
-
-  return issuerError(
-    "EVT_SIGNATURE_INVALID",
-    "No matching issuer key verified the EVT signature.",
-  );
 }
 
 function fetchError(
