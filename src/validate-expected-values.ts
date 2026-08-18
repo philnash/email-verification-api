@@ -11,19 +11,15 @@ const ClockResultSchema = z.number().nonnegative();
 export function validateExpectedValues(
   input: unknown,
 ): Result<ExpectedValuesValidatedToken> {
-  const inputResult = ExpectedValuesInputSchema.safeParse(input);
-  if (!inputResult.success) {
-    return invalidInput(
-      "Expected values must include a parsed token, email, nonce, audience, and valid timing options.",
-      inputResult.error,
-    );
-  }
+  const inputResult = parseInput(input);
+  if (!inputResult.ok) return inputResult;
+  const inputValues = inputResult.value;
 
-  const clockResult = readClock(inputResult.data.now);
+  const clockResult = readClock(inputValues.now);
   if (!clockResult.ok) return clockResult;
 
-  const { token } = inputResult.data;
-  const expectedEmail = inputResult.data.email.toLowerCase();
+  const { token } = inputValues;
+  const expectedEmail = inputValues.email.toLowerCase();
   if (expectedEmail !== token.evt.claims.email.toLowerCase()) {
     return err({
       stage: "expected-values",
@@ -40,7 +36,7 @@ export function validateExpectedValues(
     });
   }
 
-  if (inputResult.data.nonce !== token.kb.claims.nonce) {
+  if (inputValues.nonce !== token.kb.claims.nonce) {
     return err({
       stage: "expected-values",
       code: "NONCE_MISMATCH",
@@ -48,7 +44,7 @@ export function validateExpectedValues(
     });
   }
 
-  const expectedAudience = canonicalOrigin(inputResult.data.audience);
+  const expectedAudience = canonicalOrigin(inputValues.audience);
   if (!expectedAudience.ok) return expectedAudience;
   const tokenAudience = canonicalOrigin(token.kb.claims.aud);
   if (!tokenAudience.ok) return tokenAudience;
@@ -65,8 +61,8 @@ export function validateExpectedValues(
     "EVT",
     token.evt.claims.iat,
     nowEpochSeconds,
-    inputResult.data.maxTokenAgeSeconds,
-    inputResult.data.clockToleranceSeconds,
+    inputValues.maxTokenAgeSeconds,
+    inputValues.clockToleranceSeconds,
   );
   if (!evtTimeResult.ok) return evtTimeResult;
 
@@ -74,8 +70,8 @@ export function validateExpectedValues(
     "KB-JWT",
     token.kb.claims.iat,
     nowEpochSeconds,
-    inputResult.data.maxTokenAgeSeconds,
-    inputResult.data.clockToleranceSeconds,
+    inputValues.maxTokenAgeSeconds,
+    inputValues.clockToleranceSeconds,
   );
   if (!kbTimeResult.ok) return kbTimeResult;
 
@@ -83,8 +79,8 @@ export function validateExpectedValues(
     token,
     email: expectedEmail,
     audience: expectedAudience.value,
-    maxTokenAgeSeconds: inputResult.data.maxTokenAgeSeconds,
-    clockToleranceSeconds: inputResult.data.clockToleranceSeconds,
+    maxTokenAgeSeconds: inputValues.maxTokenAgeSeconds,
+    clockToleranceSeconds: inputValues.clockToleranceSeconds,
     nowEpochSeconds,
   });
   if (!validatedResult.success) {
@@ -95,6 +91,23 @@ export function validateExpectedValues(
   }
 
   return ok(validatedResult.data);
+}
+
+function parseInput(
+  input: unknown,
+): Result<z.infer<typeof ExpectedValuesInputSchema>> {
+  try {
+    const result = ExpectedValuesInputSchema.safeParse(input);
+    if (!result.success) {
+      return invalidInput(
+        "Expected values must include a parsed token, email, nonce, audience, and valid timing options.",
+        result.error,
+      );
+    }
+    return ok(result.data);
+  } catch (cause) {
+    return invalidInput("Expected values could not be read safely.", cause);
+  }
 }
 
 function readClock(now: () => unknown): Result<number> {

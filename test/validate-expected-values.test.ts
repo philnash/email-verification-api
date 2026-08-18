@@ -114,6 +114,20 @@ void describe("validateExpectedValues", () => {
     }
   });
 
+  void it("returns invalid input when reading an input property throws", async () => {
+    const fixture = await createParsedToken();
+    const input = Object.defineProperty(expectedInput(fixture), "now", {
+      enumerable: true,
+      get() {
+        throw new Error("input unavailable");
+      },
+    });
+
+    assert.doesNotThrow(() => {
+      assertErrorCode(validateExpectedValues(input), "INVALID_INPUT");
+    });
+  });
+
   void it("rejects invalid clock results and clock failures without throwing", async () => {
     const fixture = await createParsedToken();
     const invalidClocks: (() => unknown)[] = [
@@ -320,4 +334,19 @@ void describe("validateExpectedValues", () => {
 
     assertErrorCode(result, "TOKEN_EXPIRED");
   });
+
+  for (const target of timestampTargets) {
+    void it(`applies the custom future boundary to the ${target.toUpperCase()} timestamp`, async () => {
+      const fixture = await createParsedToken();
+      const token = withIssuedAt(fixture.parsed, target, nowEpochSeconds + 6);
+      const result = validateExpectedValues({
+        ...expectedInput(fixture),
+        token,
+        maxTokenAgeSeconds: 20,
+        clockToleranceSeconds: 5,
+      });
+
+      assertErrorCode(result, "TOKEN_NOT_YET_VALID");
+    });
+  }
 });
