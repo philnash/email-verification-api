@@ -1,6 +1,7 @@
 import { resolveTxt as defaultResolveTxt } from "node:dns/promises";
 import * as z from "zod";
 import { err, errorCause, ok, type Result } from "./result.js";
+import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
   DnsVerifiedTokenSchema,
   ExpectedValuesValidatedTokenSchema,
@@ -201,16 +202,6 @@ async function resolveRecords(
 
 function issuerLooksLikeUrl(value: string): boolean {
   return value.includes("://");
-}
-
-function containsAsciiWhitespaceOrControl(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint !== undefined && (codePoint <= 0x20 || codePoint === 0x7f)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function hostnameFromUrl(value: string): string | undefined {

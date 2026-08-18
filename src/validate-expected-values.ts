@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { err, errorCause, ok, type Result } from "./result.js";
+import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
   ExpectedValuesInputSchema,
   ExpectedValuesValidatedTokenSchema,
@@ -129,6 +130,8 @@ function readClock(now: () => unknown): Result<number> {
 }
 
 function canonicalOrigin(value: string): Result<string> {
+  if (containsAsciiWhitespaceOrControl(value)) return invalidAudience();
+
   try {
     const parsed = new URL(value);
     if (

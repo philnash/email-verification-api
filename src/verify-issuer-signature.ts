@@ -3,6 +3,7 @@ import { compactVerify, errors, importJWK, type JWK } from "jose";
 import * as z from "zod";
 import { parseToken } from "./parse-token.js";
 import { err, errorCause, ok, type Result } from "./result.js";
+import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
   DnsVerifiedTokenSchema,
   IssuerMetadataSchema,
@@ -272,16 +273,6 @@ function isIssuerBoundHttpsUrl(value: string, issuer: string): boolean {
   } catch {
     return false;
   }
-}
-
-function containsAsciiWhitespaceOrControl(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint !== undefined && (codePoint <= 0x20 || codePoint === 0x7f)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 async function reparseDnsVerifiedToken(

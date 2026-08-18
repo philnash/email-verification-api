@@ -3,7 +3,11 @@ import { describe, it } from "node:test";
 import { generateKeyPair } from "jose";
 import { parseToken } from "../src/parse-token.js";
 import type { Result, VerificationErrorCode } from "../src/result.js";
-import type { IssuerVerifiedToken, PublicJwk } from "../src/schemas.js";
+import {
+  IssuerVerifiedTokenSchema,
+  type IssuerVerifiedToken,
+  type PublicJwk,
+} from "../src/schemas.js";
 import { validateExpectedValues } from "../src/validate-expected-values.js";
 import { verifyDnsDelegation } from "../src/verify-dns-delegation.js";
 import { verifyIssuerSignature } from "../src/verify-issuer-signature.js";
@@ -15,6 +19,7 @@ const nowEpochSeconds = 1_800_000_000;
 const metadataUrl =
   "https://accounts.example.com/.well-known/email-verification";
 const jwksUrl = "https://keys.accounts.example.com/email-verification/jwks";
+const normalizationAcceptedAsciiControls = ["\t", "\r", "\n"];
 
 type TokenFixture = Awaited<ReturnType<typeof createTokenFixture>>;
 
@@ -253,6 +258,34 @@ void describe("verifyKeyBinding", () => {
     const result = await verifyKeyBinding({ token: altered });
 
     assertKeyBindingError(result, "INVALID_INPUT");
+  });
+
+  void it("rejects raw ASCII whitespace and controls in a structurally accepted KB audience", async () => {
+    for (const character of normalizationAcceptedAsciiControls) {
+      const fixture = await createTokenFixture({
+        audience: `https://rp.example${character}.com`,
+      });
+      const parsed = await parseToken(fixture.token);
+      assert.equal(parsed.ok, true);
+      const issuerVerified = IssuerVerifiedTokenSchema.parse({
+        token: {
+          token: {
+            token: parsed.value,
+            email: fixture.email,
+            audience: "https://rp.example.com",
+            maxTokenAgeSeconds: 300,
+            clockToleranceSeconds: 60,
+            nowEpochSeconds,
+          },
+          issuer: "accounts.example.com",
+        },
+        metadata: metadata(),
+      });
+
+      const result = await verifyKeyBinding({ token: issuerVerified });
+
+      assertKeyBindingError(result, "INVALID_INPUT");
+    }
   });
 
   void it("rejects a mutated KB payload with its original signature", async () => {

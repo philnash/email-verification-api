@@ -11,6 +11,7 @@ import {
 
 const nowEpochSeconds = 1_800_000_000;
 const now = () => nowEpochSeconds * 1_000;
+const normalizationAcceptedAsciiControls = ["\t", "\r", "\n"];
 
 async function createParsedToken(options: TokenFixtureOptions = {}): Promise<{
   parsed: ParsedToken;
@@ -244,6 +245,33 @@ void describe("validateExpectedValues", () => {
         }),
         "AUDIENCE_MISMATCH",
       );
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in the expected audience", async () => {
+    const fixture = await createParsedToken();
+
+    for (const character of normalizationAcceptedAsciiControls) {
+      const result = validateExpectedValues({
+        ...expectedInput(fixture),
+        audience: `https://rp.example${character}.com`,
+      });
+
+      assertErrorCode(result, "AUDIENCE_MISMATCH");
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in the KB audience", async () => {
+    for (const character of normalizationAcceptedAsciiControls) {
+      const fixture = await createParsedToken({
+        audience: `https://rp.example${character}.com`,
+      });
+      const result = validateExpectedValues({
+        ...expectedInput(fixture),
+        audience: "https://rp.example.com",
+      });
+
+      assertErrorCode(result, "AUDIENCE_MISMATCH");
     }
   });
 

@@ -157,6 +157,8 @@ void describe("public API", () => {
     assert.equal(publicApi.canonicalIssuer, undefined);
     // @ts-expect-error errorCause is an internal error-construction helper.
     assert.equal(publicApi.errorCause, undefined);
+    // @ts-expect-error ASCII inspection is an internal security helper.
+    assert.equal(publicApi.containsAsciiWhitespaceOrControl, undefined);
     void compilePublicApi;
     void rejectIncompleteInputAtCompileTime;
     void acceptPublicTypes;

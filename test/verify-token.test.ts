@@ -16,6 +16,7 @@ const nowEpochSeconds = 1_800_000_000;
 const metadataUrl =
   "https://accounts.example.com/.well-known/email-verification";
 const jwksUrl = "https://keys.accounts.example.com/email-verification/jwks";
+const normalizationAcceptedAsciiControls = ["\t", "\r", "\n"];
 
 type TokenFixture = Awaited<ReturnType<typeof createTokenFixture>>;
 
@@ -182,6 +183,37 @@ void describe("verifyEmailToken", () => {
       // @ts-expect-error Exercise the runtime boundary with invalid JS input.
       const result = await verifyEmailToken(input);
       assertFailure(result, "input", "INVALID_INPUT");
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in the caller audience before dependencies run", async () => {
+    const fixture = await createTokenFixture();
+
+    for (const character of normalizationAcceptedAsciiControls) {
+      const { input, dnsCalls, fetchCalls } = validInput(fixture, {
+        audience: `https://rp.example${character}.com`,
+      });
+      const result = await verifyEmailToken(input);
+
+      assertFailure(result, "expected-values", "AUDIENCE_MISMATCH");
+      assert.deepEqual(dnsCalls, []);
+      assert.deepEqual(fetchCalls, []);
+    }
+  });
+
+  void it("rejects raw ASCII whitespace and controls in a signed KB audience before dependencies run", async () => {
+    for (const character of normalizationAcceptedAsciiControls) {
+      const fixture = await createTokenFixture({
+        audience: `https://rp.example${character}.com`,
+      });
+      const { input, dnsCalls, fetchCalls } = validInput(fixture, {
+        audience: "https://rp.example.com",
+      });
+      const result = await verifyEmailToken(input);
+
+      assertFailure(result, "expected-values", "AUDIENCE_MISMATCH");
+      assert.deepEqual(dnsCalls, []);
+      assert.deepEqual(fetchCalls, []);
     }
   });
 

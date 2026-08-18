@@ -6,6 +6,7 @@ import * as z from "zod";
 import { hashFunction } from "./hash.js";
 import { parseToken } from "./parse-token.js";
 import { err, errorCause, ok, type Result } from "./result.js";
+import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
   IssuerVerifiedTokenSchema,
   KeyBindingVerifiedTokenSchema,
@@ -142,6 +143,10 @@ function canonicalAuthenticatedIssuer(token: ParsedToken): Result<string> {
 }
 
 function canonicalAuthenticatedAudience(token: ParsedToken): Result<string> {
+  if (containsAsciiWhitespaceOrControl(token.kb.claims.aud)) {
+    return invalidAuthenticatedAudience();
+  }
+
   try {
     const audience = new URL(token.kb.claims.aud);
     if (
