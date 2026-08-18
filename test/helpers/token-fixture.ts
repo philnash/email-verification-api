@@ -6,6 +6,7 @@ import {
   generateKeyPair,
   type CompactJWSHeaderParameters,
 } from "jose";
+import { PublicJwkSchema } from "../../src/schemas.js";
 
 const encoder = new TextEncoder();
 type SigningKey = Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
@@ -21,6 +22,11 @@ export interface TokenFixtureOptions {
   emailVerified?: boolean;
 }
 
+export interface RebuildTokenOptions {
+  evtPayload?: Record<string, unknown>;
+  evtHeader?: CompactJWSHeaderParameters;
+}
+
 export async function createTokenFixture(options: TokenFixtureOptions = {}) {
   const email = options.email ?? "user@example.com";
   const issuer = options.issuer ?? "https://accounts.example.com";
@@ -30,10 +36,14 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
   const kbIssuedAt = options.kbIssuedAt ?? evtIssuedAt;
   const issuerKeys = await generateKeyPair("Ed25519", { extractable: true });
   const holderKeys = await generateKeyPair("Ed25519", { extractable: true });
-  const issuerPublicJwk = await exportJWK(issuerKeys.publicKey);
-  const holderPublicJwk = await exportJWK(holderKeys.publicKey);
-  issuerPublicJwk.kid = "issuer-key";
-  issuerPublicJwk.alg = "EdDSA";
+  const issuerPublicJwk = PublicJwkSchema.parse({
+    ...(await exportJWK(issuerKeys.publicKey)),
+    kid: "issuer-key",
+    alg: "EdDSA",
+  });
+  const holderPublicJwk = PublicJwkSchema.parse(
+    await exportJWK(holderKeys.publicKey),
+  );
 
   const payload: Record<string, unknown> = {
     iss: issuer,
@@ -55,27 +65,41 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
     payload["email"] = email;
   }
 
-  const evt = await signCompact(
-    payload,
-    { alg: "EdDSA", kid: "issuer-key", typ: "evt+jwt" },
-    issuerKeys.privateKey,
-  );
-  const encodedDisclosures = disclosures.map((value) => `${value}~`).join("");
-  const presentation = `${evt}~${encodedDisclosures}`;
-  const sdHash = uint8ArrayToBase64Url(
-    createHash("sha256").update(presentation).digest(),
-  );
-  const kb = await signCompact(
-    { aud: audience, nonce, iat: kbIssuedAt, sd_hash: sdHash },
-    { alg: "EdDSA", typ: "kb+jwt" },
-    holderKeys.privateKey,
-  );
+  const defaultEvtHeader = {
+    alg: "EdDSA",
+    kid: "issuer-key",
+    typ: "evt+jwt",
+  };
+
+  const rebuildToken = async (rebuildOptions: RebuildTokenOptions = {}) => {
+    const evt = await signCompact(
+      rebuildOptions.evtPayload ?? payload,
+      rebuildOptions.evtHeader ?? defaultEvtHeader,
+      issuerKeys.privateKey,
+    );
+    const encodedDisclosures = disclosures.map((value) => `${value}~`).join("");
+    const presentation = `${evt}~${encodedDisclosures}`;
+    const sdHash = uint8ArrayToBase64Url(
+      createHash("sha256").update(presentation).digest(),
+    );
+    const kb = await signCompact(
+      { aud: audience, nonce, iat: kbIssuedAt, sd_hash: sdHash },
+      { alg: "EdDSA", typ: "kb+jwt" },
+      holderKeys.privateKey,
+    );
+
+    return {
+      token: `${presentation}${kb}`,
+      evt,
+      kb,
+      presentation,
+    };
+  };
+
+  const compactToken = await rebuildToken();
 
   return {
-    token: `${presentation}${kb}`,
-    evt,
-    kb,
-    presentation,
+    ...compactToken,
     email,
     issuer,
     audience,
@@ -84,6 +108,7 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
     kbIssuedAt,
     issuerPublicJwk,
     holderPublicJwk,
+    rebuildToken,
   };
 }
 

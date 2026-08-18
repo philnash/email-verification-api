@@ -158,6 +158,24 @@ export const DnsVerifiedTokenSchema = z.object({
   issuer: nonempty,
 });
 
+export const IssuerMetadataSchema = z.looseObject({
+  issuance_endpoint: z.url(),
+  jwks_uri: z.url(),
+  signing_alg_values_supported: z
+    .array(nonempty.refine((value) => value !== "none"))
+    .min(1)
+    .default(["EdDSA"]),
+});
+
+export const JsonWebKeySetSchema = z.object({
+  keys: z.array(PublicJwkSchema).min(1).max(20),
+});
+
+export const IssuerVerifiedTokenSchema = z.object({
+  token: DnsVerifiedTokenSchema,
+  metadata: IssuerMetadataSchema,
+});
+
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
 export type EvtHeader = z.infer<typeof EvtHeaderSchema>;
 export type EvtRawClaims = z.infer<typeof EvtRawClaimsSchema>;
@@ -169,3 +187,6 @@ export type ExpectedValuesValidatedToken = z.infer<
   typeof ExpectedValuesValidatedTokenSchema
 >;
 export type DnsVerifiedToken = z.infer<typeof DnsVerifiedTokenSchema>;
+export type IssuerMetadata = z.infer<typeof IssuerMetadataSchema>;
+export type JsonWebKeySet = z.infer<typeof JsonWebKeySetSchema>;
+export type IssuerVerifiedToken = z.infer<typeof IssuerVerifiedTokenSchema>;
