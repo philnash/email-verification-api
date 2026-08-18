@@ -25,6 +25,10 @@ export interface TokenFixtureOptions {
 export interface RebuildTokenOptions {
   evtPayload?: Record<string, unknown>;
   evtHeader?: CompactJWSHeaderParameters;
+  kbPayload?: Record<string, unknown>;
+  kbHeader?: CompactJWSHeaderParameters;
+  kbSigningKey?: SigningKey;
+  sdHashPresentation?: string;
 }
 
 export async function createTokenFixture(options: TokenFixtureOptions = {}) {
@@ -80,12 +84,19 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
     const encodedDisclosures = disclosures.map((value) => `${value}~`).join("");
     const presentation = `${evt}~${encodedDisclosures}`;
     const sdHash = uint8ArrayToBase64Url(
-      createHash("sha256").update(presentation).digest(),
+      createHash("sha256")
+        .update(rebuildOptions.sdHashPresentation ?? presentation)
+        .digest(),
     );
     const kb = await signCompact(
-      { aud: audience, nonce, iat: kbIssuedAt, sd_hash: sdHash },
-      { alg: "EdDSA", typ: "kb+jwt" },
-      holderKeys.privateKey,
+      rebuildOptions.kbPayload ?? {
+        aud: audience,
+        nonce,
+        iat: kbIssuedAt,
+        sd_hash: sdHash,
+      },
+      rebuildOptions.kbHeader ?? { alg: "EdDSA", typ: "kb+jwt" },
+      rebuildOptions.kbSigningKey ?? holderKeys.privateKey,
     );
 
     return {
@@ -108,6 +119,7 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
     kbIssuedAt,
     issuerPublicJwk,
     holderPublicJwk,
+    evtPayload: payload,
     rebuildToken,
   };
 }

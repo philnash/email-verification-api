@@ -176,6 +176,10 @@ export const IssuerVerifiedTokenSchema = z.object({
   metadata: IssuerMetadataSchema,
 });
 
+export const KeyBindingVerifiedTokenSchema = z.object({
+  token: IssuerVerifiedTokenSchema,
+});
+
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
 export type EvtHeader = z.infer<typeof EvtHeaderSchema>;
 export type EvtRawClaims = z.infer<typeof EvtRawClaimsSchema>;
@@ -190,3 +194,6 @@ export type DnsVerifiedToken = z.infer<typeof DnsVerifiedTokenSchema>;
 export type IssuerMetadata = z.infer<typeof IssuerMetadataSchema>;
 export type JsonWebKeySet = z.infer<typeof JsonWebKeySetSchema>;
 export type IssuerVerifiedToken = z.infer<typeof IssuerVerifiedTokenSchema>;
+export type KeyBindingVerifiedToken = z.infer<
+  typeof KeyBindingVerifiedTokenSchema
+>;
