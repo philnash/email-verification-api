@@ -37,6 +37,11 @@ export function canonicalIssuer(value: unknown): Result<string> {
     if (issuer !== issuer.trim()) {
       return invalidIssuer("Issuer must not contain surrounding whitespace.");
     }
+    if (containsAsciiWhitespaceOrControl(issuer)) {
+      return invalidIssuer(
+        "Issuer must not contain ASCII whitespace or control characters.",
+      );
+    }
 
     const hostname = issuerLooksLikeUrl(issuer)
       ? hostnameFromUrl(issuer)
@@ -196,6 +201,16 @@ async function resolveRecords(
 
 function issuerLooksLikeUrl(value: string): boolean {
   return value.includes("://");
+}
+
+function containsAsciiWhitespaceOrControl(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x20 || codePoint === 0x7f)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function hostnameFromUrl(value: string): string | undefined {

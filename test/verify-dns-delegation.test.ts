@@ -245,6 +245,40 @@ void describe("verifyDnsDelegation", () => {
     }
   });
 
+  void it("contains hostile resolver rejection values", async () => {
+    const validated = await createValidatedToken();
+    const throwingPrototype = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("prototype unavailable");
+        },
+      },
+    );
+    const throwingMessage = new Proxy(new Error("network down"), {
+      get(target, property, receiver) {
+        if (property === "message") throw new Error("message unavailable");
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+
+    for (const failure of [throwingPrototype, throwingMessage]) {
+      const result = await verifyDnsDelegation({
+        token: validated,
+        resolveTxt: () => ({
+          then(_resolve: unknown, reject: (reason: unknown) => void) {
+            reject(failure);
+          },
+        }),
+      });
+
+      assertErrorCode(result, "DNS_LOOKUP_FAILED");
+      if (result.ok) assert.fail("Expected DNS lookup to fail.");
+      assert.equal(result.error.cause, "Unknown error");
+    }
+  });
+
   void it("rejects malformed resolver output without throwing", async () => {
     const validated = await createValidatedToken();
     const hostileRecords = new Proxy(
@@ -327,6 +361,45 @@ void describe("verifyDnsDelegation", () => {
     assert.equal(resolverCalled, false);
   });
 
+  void it("rejects ASCII whitespace and controls in a delegated HTTPS authority", async () => {
+    const validated = await createValidatedToken();
+    const invalidIssuers = [
+      "https://accounts.\texample.com",
+      "https://accounts.\rexample.com",
+      "https://accounts.\nexample.com",
+      "https://accounts.\u000bexample.com",
+      "https://accounts. example.com",
+      "https://accounts.\u007fexample.com",
+    ];
+
+    for (const issuer of invalidIssuers) {
+      const result = await verifyDnsDelegation({
+        token: validated,
+        resolveTxt: () => Promise.resolve([[`iss=${issuer}`]]),
+      });
+
+      assertErrorCode(result, "DNS_DELEGATION_MISSING");
+    }
+  });
+
+  void it("rejects ASCII whitespace and controls in a claimed HTTPS authority", async () => {
+    const invalidIssuers = [
+      "https://accounts.\texample.com",
+      "https://accounts.\rexample.com",
+      "https://accounts.\nexample.com",
+    ];
+
+    for (const issuer of invalidIssuers) {
+      const validated = await createValidatedToken({ issuer });
+      const result = await verifyDnsDelegation({
+        token: validated,
+        resolveTxt: () => Promise.resolve([["iss=accounts.example.com"]]),
+      });
+
+      assertErrorCode(result, "ISSUER_MISMATCH");
+    }
+  });
+
   void it("canonicalizes only valid DNS hostnames and strict HTTPS URLs", () => {
     const validCases = [
       ["Accounts.Example.COM", "accounts.example.com"],
@@ -354,6 +427,12 @@ void describe("verifyDnsDelegation", () => {
       "https://accounts.example.com/path",
       "https://accounts.example.com?query=value",
       "https://accounts.example.com#fragment",
+      "https://accounts.\texample.com",
+      "https://accounts.\rexample.com",
+      "https://accounts.\nexample.com",
+      "https://accounts.\u000bexample.com",
+      "https://accounts. example.com",
+      "https://accounts.\u007fexample.com",
       42,
       null,
     ];

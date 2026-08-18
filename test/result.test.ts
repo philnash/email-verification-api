@@ -28,4 +28,38 @@ void describe("Result", () => {
     assert.equal(errorCause("timeout"), "timeout");
     assert.equal(errorCause({ code: "ENOTFOUND" }), '{"code":"ENOTFOUND"}');
   });
+
+  void it("contains hostile Error inspection and returns a stable fallback", () => {
+    const throwingPrototype = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("prototype unavailable");
+        },
+      },
+    );
+    const throwingMessage = new Proxy(new Error("network down"), {
+      get(target, property, receiver) {
+        if (property === "message") throw new Error("message unavailable");
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+
+    assert.equal(errorCause(throwingPrototype), "Unknown error");
+    assert.equal(errorCause(throwingMessage), "Unknown error");
+  });
+
+  void it("contains hostile JSON and string conversion", () => {
+    const hostileConversion = {
+      toJSON() {
+        throw new Error("JSON unavailable");
+      },
+      [Symbol.toPrimitive]() {
+        throw new Error("string conversion unavailable");
+      },
+    };
+
+    assert.equal(errorCause(hostileConversion), "Unknown error");
+  });
 });

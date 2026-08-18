@@ -47,6 +47,8 @@ export type VerificationError = z.infer<typeof VerificationErrorSchema>;
 export type Result<T, E = VerificationError> =
   { ok: true; value: T } | { ok: false; error: E };
 
+const UNKNOWN_ERROR_CAUSE = "Unknown error";
+
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export const isOk = <T, E>(
@@ -57,7 +59,19 @@ export const isErr = <T, E>(
 ): result is { ok: false; error: E } => !result.ok;
 
 export function errorCause(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
+  try {
+    if (cause instanceof Error) {
+      try {
+        const message: unknown = cause.message;
+        return typeof message === "string" ? message : UNKNOWN_ERROR_CAUSE;
+      } catch {
+        return UNKNOWN_ERROR_CAUSE;
+      }
+    }
+  } catch {
+    return UNKNOWN_ERROR_CAUSE;
+  }
+
   if (typeof cause === "string") return cause;
   try {
     const serializedCause: unknown = JSON.stringify(cause);
@@ -68,7 +82,7 @@ export function errorCause(cause: unknown): string {
     try {
       return String(cause);
     } catch {
-      return "Unknown error";
+      return UNKNOWN_ERROR_CAUSE;
     }
   }
 }
