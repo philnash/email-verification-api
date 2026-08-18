@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { parseToken } from "../src/parse-token.js";
 import { createTokenFixture } from "./helpers/token-fixture.js";
@@ -210,6 +211,24 @@ void describe("parseToken", () => {
       },
     },
     {
+      name: "rejects a disclosure with a non-string salt",
+      token: async () =>
+        replaceEmailDisclosure(await tokenFixture({ discloseEmail: true }), [
+          123,
+          "email",
+          "user@example.com",
+        ]),
+    },
+    {
+      name: "rejects a disclosure with a non-string claim name",
+      token: async () =>
+        replaceEmailDisclosure(await tokenFixture({ discloseEmail: true }), [
+          "salt",
+          ["email"],
+          "user@example.com",
+        ]),
+    },
+    {
       name: "rejects an unsupported disclosure hash algorithm",
       token: async () =>
         mutateEvtJson(
@@ -324,6 +343,26 @@ function mutateJwtJson(
     index,
     Buffer.from(JSON.stringify(object)).toString("base64url"),
   );
+}
+
+function replaceEmailDisclosure(
+  fixture: Awaited<ReturnType<typeof createTokenFixture>>,
+  disclosureTuple: unknown[],
+) {
+  const originalDisclosure = fixture.presentation.split("~")[1];
+  if (originalDisclosure === undefined) {
+    throw new TypeError("Expected a disclosed email fixture");
+  }
+  const encodedDisclosure = Buffer.from(
+    JSON.stringify(disclosureTuple),
+  ).toString("base64url");
+  const digest = createHash("sha256")
+    .update(encodedDisclosure)
+    .digest("base64url");
+  const tokenWithDigest = mutateEvtJson(fixture, "payload", (payload) => {
+    payload["_sd"] = [digest];
+  });
+  return tokenWithDigest.replace(originalDisclosure, encodedDisclosure);
 }
 
 function replacePart(jwt: string, index: number, replacement: string) {

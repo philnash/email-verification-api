@@ -4,6 +4,11 @@ const base64url = z.base64url().min(1);
 const nonempty = z.string().min(1);
 const epochSeconds = z.number().int().nonnegative();
 
+export const DisclosureTupleSchema = z.union([
+  z.tuple([z.string(), z.unknown()]),
+  z.tuple([z.string(), z.string(), z.unknown()]),
+]);
+
 const CommonPublicJwkProperties = {
   alg: nonempty.optional(),
   kid: nonempty.optional(),

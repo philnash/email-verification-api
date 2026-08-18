@@ -9,6 +9,7 @@ import * as z from "zod";
 import { hashFunction } from "./hash.js";
 import { err, errorCause, ok, type Result } from "./result.js";
 import {
+  DisclosureTupleSchema,
   EvtHeaderSchema,
   EvtRawClaimsSchema,
   KbClaimsSchema,
@@ -127,6 +128,9 @@ async function resolveDisclosures(
 ): Promise<unknown> {
   try {
     const decoded = await decodeSdJwt(token, hashFunction);
+    for (const disclosure of decoded.disclosures) {
+      DisclosureTupleSchema.parse(disclosure.decode());
+    }
     const { unpackedObj, disclosureKeymap } = await unpack(
       rawClaims,
       decoded.disclosures,
