@@ -128,6 +128,31 @@ export const ParsedTokenSchema = z.object({
   presentation: nonempty,
 });
 
+const timingSeconds = z.number().nonnegative();
+const ClockSchema = z
+  .custom<() => unknown>((value) => typeof value === "function")
+  .optional()
+  .transform((value) => value ?? (() => Date.now()));
+
+export const ExpectedValuesInputSchema = z.object({
+  token: ParsedTokenSchema,
+  email: z.email(),
+  nonce: nonempty,
+  audience: z.url(),
+  maxTokenAgeSeconds: timingSeconds.default(300),
+  clockToleranceSeconds: timingSeconds.default(60),
+  now: ClockSchema,
+});
+
+export const ExpectedValuesValidatedTokenSchema = z.object({
+  token: ParsedTokenSchema,
+  email: z.email(),
+  audience: z.url(),
+  maxTokenAgeSeconds: timingSeconds,
+  clockToleranceSeconds: timingSeconds,
+  nowEpochSeconds: epochSeconds,
+});
+
 export type PublicJwk = z.infer<typeof PublicJwkSchema>;
 export type EvtHeader = z.infer<typeof EvtHeaderSchema>;
 export type EvtRawClaims = z.infer<typeof EvtRawClaimsSchema>;
@@ -135,3 +160,6 @@ export type EvtClaims = z.infer<typeof EvtClaimsSchema>;
 export type KbHeader = z.infer<typeof KbHeaderSchema>;
 export type KbClaims = z.infer<typeof KbClaimsSchema>;
 export type ParsedToken = z.infer<typeof ParsedTokenSchema>;
+export type ExpectedValuesValidatedToken = z.infer<
+  typeof ExpectedValuesValidatedTokenSchema
+>;
