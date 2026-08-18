@@ -18,6 +18,12 @@ const metadataUrl =
 const jwksUrl = "https://keys.accounts.example.com/email-verification/jwks";
 const normalizationAcceptedAsciiControls = ["\t", "\r", "\n"];
 
+function publicResolveHost(): Promise<
+  readonly { address: string; family: 4 | 6 }[]
+> {
+  return Promise.resolve([{ address: "8.8.8.8", family: 4 }]);
+}
+
 type TokenFixture = Awaited<ReturnType<typeof createTokenFixture>>;
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -60,6 +66,7 @@ function validInput(
         dnsCalls.push(hostname);
         return Promise.resolve([["iss=accounts.example.com"]]);
       },
+      resolveHost: publicResolveHost,
       fetch: network.fetch,
       ...overrides,
     },
@@ -134,6 +141,10 @@ void describe("verifyEmailToken", () => {
         events.push(hostname);
         return Promise.resolve([["iss=accounts.example.com"]]);
       },
+      resolveHost: (hostname) => {
+        events.push(`resolve:${hostname}`);
+        return publicResolveHost();
+      },
       fetch: async (input) => {
         const url =
           typeof input === "string"
@@ -149,7 +160,9 @@ void describe("verifyEmailToken", () => {
     assert.equal(result.ok, true);
     assert.deepEqual(events, [
       "_email-verification.example.com",
+      "resolve:accounts.example.com",
       metadataUrl,
+      "resolve:keys.accounts.example.com",
       jwksUrl,
     ]);
   });
@@ -166,7 +179,25 @@ void describe("verifyEmailToken", () => {
     assert.equal(parsed.clockToleranceSeconds, 60);
     assert.equal(parsed.fetch, globalThis.fetch);
     assert.equal(parsed.resolveTxt, defaultResolveTxt);
+    assert.equal(typeof parsed.resolveHost, "function");
     assert.equal(typeof parsed.now, "function");
+  });
+
+  void it("passes resolveHost failures through the issuer stage", async () => {
+    const fixture = await createTokenFixture();
+    let resolveCalls = 0;
+    const { input, fetchCalls } = validInput(fixture, {
+      resolveHost: () => {
+        resolveCalls += 1;
+        return Promise.reject(new Error("lookup failed"));
+      },
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "issuer", "METADATA_FETCH_FAILED");
+    assert.equal(resolveCalls, 1);
+    assert.deepEqual(fetchCalls, []);
   });
 
   void it("returns input failures for malformed and hostile input", async () => {

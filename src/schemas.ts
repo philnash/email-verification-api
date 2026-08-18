@@ -1,4 +1,7 @@
-import { resolveTxt as defaultResolveTxt } from "node:dns/promises";
+import {
+  lookup as nodeLookup,
+  resolveTxt as defaultResolveTxt,
+} from "node:dns/promises";
 import * as z from "zod";
 
 const base64url = z.base64url().min(1);
@@ -138,10 +141,48 @@ const ClockSchema = z
 type FetchFunction = typeof globalThis.fetch;
 type ResolveTxtFunction = typeof defaultResolveTxt;
 
+export const ResolvedAddressSchema = z.object({
+  address: z.string().min(1),
+  family: z.union([z.literal(4), z.literal(6)]),
+});
+
+export const ResolvedAddressesSchema = z
+  .array(ResolvedAddressSchema)
+  .min(1)
+  .max(20);
+const UnboundedResolvedAddressesSchema = z.array(ResolvedAddressSchema);
+
+export type ResolvedAddress = z.infer<typeof ResolvedAddressSchema>;
+export type ResolveHost = (
+  hostname: string,
+) => Promise<readonly ResolvedAddress[]>;
+
+export function normalizeDefaultLookupAddresses(
+  value: unknown,
+): readonly ResolvedAddress[] {
+  try {
+    const result = UnboundedResolvedAddressesSchema.safeParse(value);
+    return result.success ? result.data : [];
+  } catch {
+    return [];
+  }
+}
+
+export const defaultResolveHost: ResolveHost = async (hostname) => {
+  const addresses = await nodeLookup(hostname, {
+    all: true,
+    verbatim: true,
+  });
+  return normalizeDefaultLookupAddresses(addresses);
+};
+
 const FetchSchema = z.custom<FetchFunction>(
   (value) => typeof value === "function",
 );
 const ResolveTxtSchema = z.custom<ResolveTxtFunction>(
+  (value) => typeof value === "function",
+);
+export const ResolveHostSchema = z.custom<ResolveHost>(
   (value) => typeof value === "function",
 );
 
@@ -208,6 +249,9 @@ export const VerifyEmailTokenInputSchema = z.object({
   fetch: FetchSchema.optional().transform((value) => value ?? globalThis.fetch),
   resolveTxt: ResolveTxtSchema.optional().transform(
     (value) => value ?? defaultResolveTxt,
+  ),
+  resolveHost: ResolveHostSchema.optional().transform(
+    (value) => value ?? defaultResolveHost,
   ),
   now: ClockSchema,
 });

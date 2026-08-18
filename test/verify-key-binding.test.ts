@@ -80,6 +80,7 @@ async function createIssuerVerifiedToken(
   const issuerVerified = await verifyIssuerSignature({
     token: delegated.value,
     fetch: network.fetch,
+    resolveHost: () => Promise.resolve([{ address: "8.8.8.8", family: 4 }]),
   });
   assert.equal(issuerVerified.ok, true);
   return issuerVerified.value;

@@ -16,6 +16,9 @@ import {
   KeyBindingVerifiedTokenSchema,
   ParsedTokenSchema,
   PublicJwkSchema,
+  ResolvedAddressSchema,
+  ResolvedAddressesSchema,
+  ResolveHostSchema,
   VerificationErrorCodeSchema,
   VerificationErrorSchema,
   VerificationStageSchema,
@@ -46,6 +49,8 @@ import type {
   KeyBindingVerifiedToken,
   ParsedToken,
   PublicJwk,
+  ResolvedAddress,
+  ResolveHost,
   Result,
   VerificationError,
   VerificationErrorCode,
@@ -71,6 +76,9 @@ const publicSchemas = [
   KeyBindingVerifiedTokenSchema,
   ParsedTokenSchema,
   PublicJwkSchema,
+  ResolvedAddressSchema,
+  ResolvedAddressesSchema,
+  ResolveHostSchema,
   VerificationErrorCodeSchema,
   VerificationErrorSchema,
   VerificationStageSchema,
@@ -92,6 +100,15 @@ const publicFunctions = [
 ];
 
 async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
+  const resolveHost: ResolveHost = () =>
+    Promise.resolve([{ address: "8.8.8.8", family: 4 }]);
+  const inputWithResolver: VerifyEmailTokenInput = { ...input, resolveHost };
+  const resolvedAddress: ResolvedAddress = {
+    address: "8.8.8.8",
+    family: 4,
+  };
+  void inputWithResolver;
+  void resolvedAddress;
   const result = await verifyEmailToken(input);
   if (result.ok) {
     const email: string = result.value.email;
@@ -131,6 +148,8 @@ type PublicTypes = readonly [
   KeyBindingVerifiedToken,
   ParsedToken,
   PublicJwk,
+  ResolvedAddress,
+  ResolveHost,
   Result<VerifiedEmail>,
   VerificationError,
   VerificationErrorCode,
@@ -159,6 +178,8 @@ void describe("public API", () => {
     assert.equal(publicApi.errorCause, undefined);
     // @ts-expect-error ASCII inspection is an internal security helper.
     assert.equal(publicApi.containsAsciiWhitespaceOrControl, undefined);
+    // @ts-expect-error Default DNS wrappers are internal implementation details.
+    assert.equal(publicApi.defaultResolveHost, undefined);
     void compilePublicApi;
     void rejectIncompleteInputAtCompileTime;
     void acceptPublicTypes;

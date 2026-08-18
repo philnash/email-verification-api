@@ -32,7 +32,9 @@ npm install email-verification
 
 The package is ESM-only and includes TypeScript declarations. Its default
 network implementations use global `fetch` and
-`node:dns/promises.resolveTxt`.
+`node:dns/promises.resolveTxt`. Issuer HTTP requests also use
+`node:dns/promises.lookup` to reject targets that resolve to non-global
+addresses before Fetch.
 
 ## Verify a token
 
@@ -83,6 +85,7 @@ The optional inputs are:
 | `clockToleranceSeconds` | `60`                           | Clock skew allowed for age and future issue times. |
 | `fetch`                 | global `fetch`                 | Fetch implementation used for metadata and JWKS.   |
 | `resolveTxt`            | `node:dns/promises.resolveTxt` | DNS TXT resolver.                                  |
+| `resolveHost`           | `node:dns/promises.lookup`     | Address resolver used before each issuer request.  |
 | `now`                   | `() => Date.now()`             | Clock returning Unix time in milliseconds.         |
 
 Exact age and tolerance boundaries are accepted. Both timing options must be
@@ -168,11 +171,19 @@ Pass network and clock implementations per verification call when a runtime,
 test, or application needs different behavior:
 
 ```ts
-import { resolveTxt } from "node:dns/promises";
+import { lookup, resolveTxt } from "node:dns/promises";
 import { verifyEmailToken } from "email-verification";
+import type { ResolveHost } from "email-verification";
 
 declare const tokenFromBrowser: string;
 declare const nonceForSession: string;
+
+const resolveHost: ResolveHost = async (hostname) => {
+  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  return addresses.flatMap(({ address, family }) =>
+    family === 4 || family === 6 ? [{ address, family }] : [],
+  );
+};
 
 const result = await verifyEmailToken({
   token: tokenFromBrowser,
@@ -181,11 +192,27 @@ const result = await verifyEmailToken({
   audience: "https://rp.example.com",
   fetch: globalThis.fetch,
   resolveTxt,
+  resolveHost,
   now: () => Date.now(),
   maxTokenAgeSeconds: 300,
   clockToleranceSeconds: 60,
 });
 ```
+
+`resolveHost` has a deliberately small cross-runtime shape:
+
+```ts
+type ResolveHost = (
+  hostname: string,
+) => Promise<readonly { address: string; family: 4 | 6 }[]>;
+```
+
+It is called immediately before both metadata and JWKS Fetch calls, including
+twice when both URLs use the same hostname. Every returned address must match
+its declared family and be globally reachable. Empty, malformed, excessive, or
+mixed public/private answers fail verification. Issuer requests use
+credentialless `GET`, set Fetch redirect handling to `error`, and reject a
+response wrapper that reports it was redirected.
 
 Rejected promises, thrown values, and invalid responses from injected
 dependencies are converted to failed Results.
@@ -203,6 +230,7 @@ declare const tokenFromBrowser: string;
 declare const nonceForSession: string;
 declare const applicationDnsTtlMilliseconds: number;
 declare const cachedFetch: typeof globalThis.fetch;
+declare const cachedResolveHost: import("email-verification").ResolveHost;
 
 const txtCache = new Map<
   string,
@@ -239,6 +267,7 @@ const result = await verifyEmailToken({
   email: "user@example.com",
   audience: "https://rp.example.com",
   resolveTxt: cachedResolveTxt,
+  resolveHost: cachedResolveHost,
   fetch: cachedFetch,
 });
 ```
@@ -246,9 +275,20 @@ const result = await verifyEmailToken({
 The example deliberately leaves cache policy with the application. DNS cache
 lifetimes must not exceed the authoritative record TTL; `resolveTxt` does not
 return that TTL, so obtain it through an appropriate resolver or cache adapter.
-An injected Fetch cache must honor HTTP cache directives, redirect handling,
-expiry, and revalidation for both issuer metadata and JWKS. Do not use a single
-arbitrary lifetime for both DNS and HTTP data.
+The library calls `resolveHost` immediately before every HTTP request. An
+injected resolver may cache, but its lifetime must follow DNS TTLs and security
+policy; long-lived address caching can hide DNS changes, while no caching can
+still permit DNS rebinding between the preflight lookup and Fetch. An injected
+Fetch cache must honor HTTP cache directives, expiry, and revalidation for both
+issuer metadata and JWKS, preserve the library's credentialless `GET` request
+options, and never follow redirects. Do not use a single arbitrary lifetime for
+TXT records, host addresses, and HTTP data.
+
+The address preflight is best-effort SSRF protection. Standard Fetch does not
+let this library pin the checked DNS answer to the connection it opens. A
+high-assurance deployment must also enforce network egress ACLs or inject a
+Fetch transport that revalidates and pins every connection address while
+preserving TLS SNI and certificate verification and rejecting redirects.
 
 ## Use individual stages
 
@@ -320,4 +360,4 @@ The application must:
 MIT
 
 [chrome-origin-trial]: https://developer.chrome.com/blog/email-verification-protocol-origin-trial
-[protocol-draft]: https://www.ietf.org/archive/id/draft-hardt-email-verification-00.html
+[protocol-draft]: https://www.ietf.org/archive/id/draft-hardt-email-verification-01.html

@@ -47,6 +47,7 @@ export async function verifyEmailToken(
     const issuerVerified = await verifyIssuerSignature({
       token: delegated.value,
       fetch: parsedInput.data.fetch,
+      resolveHost: parsedInput.data.resolveHost,
     });
     if (!issuerVerified.ok) return issuerVerified;
 

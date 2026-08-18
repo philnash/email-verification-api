@@ -1,18 +1,25 @@
 import { isDeepStrictEqual } from "node:util";
 import { compactVerify, errors, importJWK, type JWK } from "jose";
 import * as z from "zod";
+import {
+  isSafeNetworkHostname,
+  validateResolvedAddresses,
+} from "./network-safety.js";
 import { parseToken } from "./parse-token.js";
 import { err, errorCause, ok, type Result } from "./result.js";
 import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
   DnsVerifiedTokenSchema,
+  defaultResolveHost,
   IssuerMetadataSchema,
   IssuerVerifiedTokenSchema,
   JsonWebKeySetSchema,
+  ResolveHostSchema,
   type IssuerMetadata,
   type IssuerVerifiedToken,
   type JsonWebKeySet,
   type PublicJwk,
+  type ResolveHost,
 } from "./schemas.js";
 import { validateExpectedValues } from "./validate-expected-values.js";
 import { canonicalIssuer } from "./verify-dns-delegation.js";
@@ -30,12 +37,16 @@ const FetchSchema = z.custom<FetchFunction>(
 const VerifyIssuerSignatureInputSchema = z.object({
   token: DnsVerifiedTokenSchema,
   fetch: FetchSchema.optional().transform((value) => value ?? globalThis.fetch),
+  resolveHost: ResolveHostSchema.optional().transform(
+    (value) => value ?? defaultResolveHost,
+  ),
 });
 
 const FetchResponseSchema = z.looseObject({
   ok: z.boolean(),
   status: z.number().int().nonnegative().max(599),
   url: z.string(),
+  redirected: z.boolean(),
   json: z.custom<JsonReader>((value) => typeof value === "function"),
 });
 
@@ -45,7 +56,7 @@ export async function verifyIssuerSignature(
   const inputResult = parseInput(input);
   if (!inputResult.ok) return inputResult;
 
-  const { token: inputToken, fetch } = inputResult.value;
+  const { token: inputToken, fetch, resolveHost } = inputResult.value;
   const canonicalIssuerResult = canonicalIssuer(inputToken.issuer);
   if (
     !canonicalIssuerResult.ok ||
@@ -54,6 +65,12 @@ export async function verifyIssuerSignature(
     return issuerError(
       "INVALID_INPUT",
       "Issuer verification requires a canonical DNS-verified issuer hostname.",
+    );
+  }
+  if (!isSafeNetworkHostname(inputToken.issuer)) {
+    return issuerError(
+      "METADATA_INVALID",
+      "The issuer hostname is not permitted for network access.",
     );
   }
 
@@ -68,6 +85,7 @@ export async function verifyIssuerSignature(
     url: metadataUrl,
     issuer: token.issuer,
     kind: "metadata",
+    resolveHost,
   });
   if (!metadataDocument.ok) return metadataDocument;
 
@@ -88,6 +106,7 @@ export async function verifyIssuerSignature(
     url: metadata.jwks_uri,
     issuer: token.issuer,
     kind: "JWKS",
+    resolveHost,
   });
   if (!jwksDocument.ok) return jwksDocument;
 
@@ -149,15 +168,36 @@ async function fetchJsonDocument({
   url,
   issuer,
   kind,
+  resolveHost,
 }: {
   fetch: FetchFunction;
   url: string;
   issuer: string;
   kind: DocumentKind;
+  resolveHost: ResolveHost;
 }): Promise<Result<unknown>> {
+  const target = issuerBoundHttpsUrl(valueWithoutAsciiControls(url), issuer);
+  if (target === undefined) {
+    return documentError(
+      kind,
+      `${kind} target is not a permitted issuer-bound HTTPS URL.`,
+    );
+  }
+
+  const resolutionResult = await resolveNetworkTarget(
+    resolveHost,
+    target.hostname,
+    kind,
+  );
+  if (!resolutionResult.ok) return resolutionResult;
+
   let responseValue: unknown;
   try {
-    responseValue = await fetch(url);
+    responseValue = await fetch(url, {
+      method: "GET",
+      redirect: "error",
+      credentials: "omit",
+    });
   } catch (cause) {
     return fetchError(kind, `${kind} could not be fetched.`, cause);
   }
@@ -178,7 +218,14 @@ async function fetchJsonDocument({
   }
 
   const response = responseResult.data;
-  if (response.url !== "" && !isIssuerBoundHttpsUrl(response.url, issuer)) {
+  if (response.redirected) {
+    return documentError(kind, `${kind} response must not be redirected.`);
+  }
+  if (
+    response.url !== "" &&
+    issuerBoundHttpsUrl(valueWithoutAsciiControls(response.url), issuer) ===
+      undefined
+  ) {
     return documentError(
       kind,
       `${kind} was returned from an unsafe redirect URL.`,
@@ -219,8 +266,14 @@ function parseMetadata(value: unknown, issuer: string): Result<IssuerMetadata> {
   }
 
   if (
-    !isIssuerBoundHttpsUrl(result.data.issuance_endpoint, issuer) ||
-    !isIssuerBoundHttpsUrl(result.data.jwks_uri, issuer)
+    issuerBoundHttpsUrl(
+      valueWithoutAsciiControls(result.data.issuance_endpoint),
+      issuer,
+    ) === undefined ||
+    issuerBoundHttpsUrl(
+      valueWithoutAsciiControls(result.data.jwks_uri),
+      issuer,
+    ) === undefined
   ) {
     return issuerError(
       "METADATA_INVALID",
@@ -249,9 +302,11 @@ function parseJwks(value: unknown): Result<JsonWebKeySet> {
   }
 }
 
-function isIssuerBoundHttpsUrl(value: string, issuer: string): boolean {
-  if (containsAsciiWhitespaceOrControl(value)) return false;
-
+function issuerBoundHttpsUrl(
+  value: string | undefined,
+  issuer: string,
+): URL | undefined {
+  if (value === undefined) return undefined;
   try {
     const url = new URL(value);
     if (
@@ -260,19 +315,53 @@ function isIssuerBoundHttpsUrl(value: string, issuer: string): boolean {
       url.password !== "" ||
       url.port !== ""
     ) {
-      return false;
+      return undefined;
     }
 
     const hostname = url.hostname.endsWith(".")
       ? url.hostname.slice(0, -1)
       : url.hostname;
     const normalizedHostname = hostname.toLowerCase();
-    return (
-      normalizedHostname === issuer || normalizedHostname.endsWith(`.${issuer}`)
-    );
+    if (
+      normalizedHostname === issuer ||
+      normalizedHostname.endsWith(`.${issuer}`)
+    ) {
+      return isSafeNetworkHostname(normalizedHostname) ? url : undefined;
+    }
+    return undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+function valueWithoutAsciiControls(value: string): string | undefined {
+  return containsAsciiWhitespaceOrControl(value) ? undefined : value;
+}
+
+async function resolveNetworkTarget(
+  resolveHost: ResolveHost,
+  hostname: string,
+  kind: DocumentKind,
+): Promise<Result<true>> {
+  let addresses: unknown;
+  try {
+    addresses = await resolveHost(hostname);
+  } catch (cause) {
+    return fetchError(
+      kind,
+      `${kind} target hostname could not be resolved.`,
+      cause,
+    );
+  }
+
+  const validation = validateResolvedAddresses(addresses);
+  if (!validation.ok) {
+    return documentError(
+      kind,
+      `${kind} target did not resolve exclusively to globally reachable addresses.`,
+    );
+  }
+  return ok(true);
 }
 
 async function reparseDnsVerifiedToken(

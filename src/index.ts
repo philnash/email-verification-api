@@ -30,6 +30,9 @@ export {
   KeyBindingVerifiedTokenSchema,
   ParsedTokenSchema,
   PublicJwkSchema,
+  ResolvedAddressSchema,
+  ResolvedAddressesSchema,
+  ResolveHostSchema,
   VerifiedEmailSchema,
   VerifyEmailTokenInputSchema,
 } from "./schemas.js";
@@ -47,6 +50,8 @@ export type {
   KeyBindingVerifiedToken,
   ParsedToken,
   PublicJwk,
+  ResolvedAddress,
+  ResolveHost,
   VerifiedEmail,
   VerifyEmailTokenInput,
 } from "./schemas.js";
