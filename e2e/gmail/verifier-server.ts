@@ -38,7 +38,7 @@ function safeJson(value: unknown): string {
 function renderForm(nonce: string): string {
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>Gmail Email Verification E2E</title></head>
+  <head><meta charset="utf-8"><link rel="icon" href="data:,"><title>Gmail Email Verification E2E</title></head>
   <body>
     <main>
       <h1>Gmail Email Verification E2E</h1>
@@ -65,7 +65,7 @@ function renderResult(submission: VerificationSubmission): string {
   const status = submission.result.ok ? "ok" : "error";
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>Email verification result</title></head>
+  <head><meta charset="utf-8"><link rel="icon" href="data:,"><title>Email verification result</title></head>
   <body>
     <main>
       <h1>Email verification ${status}</h1>

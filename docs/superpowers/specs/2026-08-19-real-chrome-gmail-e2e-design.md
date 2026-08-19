@@ -36,16 +36,19 @@ A dedicated command, `npm run test:e2e:gmail`, will:
 1. build the package so the fixture consumes the same `dist/` entry point as a
    package user;
 2. start a minimal verifier server on a fixed loopback origin;
-3. launch the installed desktop Google Chrome channel in headed mode with
-   `--enable-features=EmailVerificationProtocol`;
+3. launch the installed desktop Google Chrome executable directly with
+   `--enable-features=EmailVerificationProtocol` and a local DevTools endpoint;
 4. reuse an ignored persistent profile at `.e2e/chrome-profile`;
-5. open the verifier form and wait for the guided user interaction;
-6. capture the structured verification result and browser diagnostics;
-7. assert that `verifyEmailToken()` returned success; and
-8. close the server and browser context cleanly.
+5. attach Playwright over the Chrome DevTools Protocol for observation and
+   assertions;
+6. open the verifier form and wait for the guided user interaction;
+7. capture the structured verification result and browser diagnostics;
+8. assert that `verifyEmailToken()` returned success; and
+9. close the server and browser cleanly.
 
-The Playwright project will run one test with one worker. Its timeout will be
-long enough for a first-run Google sign-in and Chrome permission prompt.
+The Playwright project will run one test with one worker. Google sign-in is
+bootstrapped separately in ordinary Chrome so Playwright launch arguments cannot
+cause Google to reject the authentication session.
 
 ## Verifier Fixture
 
@@ -79,9 +82,15 @@ The fixture will not log or render the submitted presentation token.
 ## Human Interaction
 
 Chrome will use the dedicated persistent profile rather than the user's normal
-browser profile. On the first run, the user can open Gmail in another tab and
-sign in to the account manually. That authentication state remains only in the
+browser profile. On the first run, `npm run test:e2e:gmail:setup` opens ordinary
+Chrome with only the profile, protocol feature flag, and Gmail URL. The user
+signs in and closes Chrome. That authentication state remains only in the
 ignored test profile and is available to later runs.
+
+The guided test also launches ordinary Chrome directly, adding only the local
+verifier URL and a DevTools port. Playwright connects to that already-running
+browser over CDP instead of launching it with automation, sandbox, password
+store, or mock-keychain flags.
 
 The user will enter the Gmail address, handle any Chrome permission prompt,
 wait for the browser's verification indicator, and submit the form. Playwright

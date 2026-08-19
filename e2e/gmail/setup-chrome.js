@@ -12,6 +12,19 @@ export function chromeArguments(profileDirectory) {
   ];
 }
 
+export function chromeDebugArguments(
+  profileDirectory,
+  startUrl,
+  debuggingPort,
+) {
+  return [
+    `--user-data-dir=${profileDirectory}`,
+    "--enable-features=EmailVerificationProtocol",
+    `--remote-debugging-port=${String(debuggingPort)}`,
+    startUrl,
+  ];
+}
+
 export function chromeExecutable(platform, environment) {
   if (environment.CHROME_PATH) {
     return environment.CHROME_PATH;

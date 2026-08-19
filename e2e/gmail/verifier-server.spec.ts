@@ -16,6 +16,7 @@ test("serves a nonce-bound form and captures invalid input", async () => {
     expect(formResponse.status).toBe(200);
     expect(sessionCookie).toBeTruthy();
     expect(nonce).toBeTruthy();
+    expect(formHtml).toContain('<link rel="icon" href="data:,">');
     expect(formHtml).toContain('autocomplete="email-verification-token"');
 
     const verifyResponse = await fetch(`${server.origin}/verify`, {
