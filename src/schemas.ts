@@ -73,7 +73,7 @@ export const PublicJwkSchema = z
 
 export const EvtHeaderSchema = z.looseObject({
   alg: nonempty.refine((value) => value !== "none"),
-  kid: nonempty,
+  kid: nonempty.optional(),
   typ: z.literal("evt+jwt"),
 });
 

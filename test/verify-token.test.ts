@@ -102,28 +102,33 @@ function mutateSignature(compact: string): string {
 
 void describe("verifyEmailToken", () => {
   for (const discloseEmail of [false, true]) {
-    void it(`verifies a ${discloseEmail ? "selectively disclosed" : "direct"} email token end to end`, async () => {
-      const fixture = await createTokenFixture({ discloseEmail });
-      const { input, dnsCalls, fetchCalls } = validInput(fixture);
-      const parsed = await parseToken(fixture.token);
-      assert.equal(parsed.ok, true);
+    for (const includeEvtKid of [true, false]) {
+      void it(`verifies a ${discloseEmail ? "selectively disclosed" : "direct"} email token ${includeEvtKid ? "with" : "without"} kid end to end`, async () => {
+        const fixture = await createTokenFixture({
+          discloseEmail,
+          includeEvtKid,
+        });
+        const { input, dnsCalls, fetchCalls } = validInput(fixture);
+        const parsed = await parseToken(fixture.token);
+        assert.equal(parsed.ok, true);
 
-      const result = await verifyEmailToken(input);
+        const result = await verifyEmailToken(input);
 
-      assert.equal(result.ok, true);
-      assert.deepEqual(result.value, {
-        email: "user@example.com",
-        issuer: "accounts.example.com",
-        audience: "https://rp.example.com",
-        issuedAt: {
-          evt: fixture.evtIssuedAt,
-          keyBinding: fixture.kbIssuedAt,
-        },
-        claims: parsed.value.evt.claims,
+        assert.equal(result.ok, true);
+        assert.deepEqual(result.value, {
+          email: "user@example.com",
+          issuer: "accounts.example.com",
+          audience: "https://rp.example.com",
+          issuedAt: {
+            evt: fixture.evtIssuedAt,
+            keyBinding: fixture.kbIssuedAt,
+          },
+          claims: parsed.value.evt.claims,
+        });
+        assert.deepEqual(dnsCalls, ["_email-verification.example.com"]);
+        assert.deepEqual(fetchCalls, [metadataUrl, jwksUrl]);
       });
-      assert.deepEqual(dnsCalls, ["_email-verification.example.com"]);
-      assert.deepEqual(fetchCalls, [metadataUrl, jwksUrl]);
-    });
+    }
   }
 
   void it("calls DNS, metadata, and JWKS in protocol trust order", async () => {

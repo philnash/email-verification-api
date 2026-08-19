@@ -26,6 +26,15 @@ void describe("parseToken", () => {
     assert.equal(result.value.disclosures.length, 1);
   });
 
+  void it("parses an EVT without kid", async () => {
+    const fixture = await createTokenFixture({ includeEvtKid: false });
+
+    const result = await parseToken(fixture.token);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.value.evt.header.kid, undefined);
+  });
+
   const malformedCases: readonly {
     name: string;
     token: () => Promise<unknown>;
@@ -96,10 +105,17 @@ void describe("parseToken", () => {
         }),
     },
     {
-      name: "rejects a missing EVT kid",
+      name: "rejects an empty EVT kid",
       token: async () =>
         mutateEvtJson(await tokenFixture(), "header", (header) => {
-          delete header["kid"];
+          header["kid"] = "";
+        }),
+    },
+    {
+      name: "rejects a non-string EVT kid",
+      token: async () =>
+        mutateEvtJson(await tokenFixture(), "header", (header) => {
+          header["kid"] = 123;
         }),
     },
     ...["iss", "iat", "cnf", "email", "email_verified"].map((claim) => ({

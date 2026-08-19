@@ -473,7 +473,7 @@ function safeDeepStrictEqual(
 async function verifyEvtSignature(
   compactEvt: string,
   algorithm: string,
-  keyId: string,
+  keyId: string | undefined,
   jwks: JsonWebKeySet,
 ): Promise<Result<true>> {
   const matchingKeys = jwks.keys.filter((jwk) =>
@@ -528,11 +528,11 @@ async function verifyEvtSignature(
 function matchesEvtHeader(
   jwk: PublicJwk,
   algorithm: string,
-  keyId: string,
+  keyId: string | undefined,
 ): boolean {
   return (
     isAlgorithmCompatibleJwk(jwk, algorithm) &&
-    jwk.kid === keyId &&
+    (keyId === undefined || jwk.kid === keyId) &&
     (jwk.alg === undefined || jwk.alg === algorithm) &&
     (jwk.use === undefined || jwk.use === "sig") &&
     (jwk.key_ops === undefined || jwk.key_ops.includes("verify"))

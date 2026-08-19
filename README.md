@@ -124,6 +124,12 @@ The local checks in stage 2 inspect untrusted claims only as an early rejection.
 The EVT issuer signature in stage 4 is what authenticates `cnf.jwk`; the holder
 key must not be trusted or used to verify the KB-JWT before that point.
 
+Draft-01 requires an EVT `kid`, but some origin-trial tokens omit it. For
+interoperability this release accepts both forms. When `kid` is present it must
+match exactly; when absent, verification considers at most ten otherwise
+compatible issuer keys. This is temporary interoperability behavior, not the
+standards-compliant token shape.
+
 ## Errors and Results
 
 Every verification stage returns `Result` or `Promise<Result>` rather than

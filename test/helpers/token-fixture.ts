@@ -19,6 +19,7 @@ export interface TokenFixtureOptions {
   evtIssuedAt?: number;
   kbIssuedAt?: number;
   discloseEmail?: boolean;
+  includeEvtKid?: boolean;
   emailVerified?: boolean;
 }
 
@@ -69,9 +70,9 @@ export async function createTokenFixture(options: TokenFixtureOptions = {}) {
     payload["email"] = email;
   }
 
-  const defaultEvtHeader = {
+  const defaultEvtHeader: CompactJWSHeaderParameters = {
     alg: "EdDSA",
-    kid: "issuer-key",
+    ...(options.includeEvtKid === false ? {} : { kid: "issuer-key" }),
     typ: "evt+jwt",
   };
 

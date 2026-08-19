@@ -810,7 +810,7 @@ void describe("verifyIssuerSignature", () => {
     assertIssuerError(result, "JWKS_INVALID");
   });
 
-  void it("rejects a missing key id and an incompatible key", async () => {
+  void it("rejects a different key id and an incompatible key", async () => {
     const { fixture, token } = await createDnsVerifiedFixture();
     const incompatibleKeys: PublicJwk[] = [
       { ...fixture.issuerPublicJwk, kid: "another-key" },
@@ -848,6 +848,108 @@ void describe("verifyIssuerSignature", () => {
       [metadataUrl]: () => jsonResponse(metadata()),
       [jwksUrl]: () =>
         jsonResponse({ keys: [...wrongKeys, fixture.issuerPublicJwk] }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("verifies an EVT without kid against a compatible identified key", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture({
+      includeEvtKid: false,
+    });
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () => jsonResponse({ keys: [fixture.issuerPublicJwk] }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("tries compatible keys with different key ids when the EVT has no kid", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture({
+      includeEvtKid: false,
+    });
+    const wrongKeys: PublicJwk[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const pair = await generateKeyPair("Ed25519", { extractable: true });
+      wrongKeys.push(
+        PublicJwkSchema.parse({
+          ...(await exportJWK(pair.publicKey)),
+          alg: "EdDSA",
+          kid: `wrong-key-${String(index)}`,
+        }),
+      );
+    }
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: [
+            ...wrongKeys,
+            { ...fixture.issuerPublicJwk, kid: "valid-different-key-id" },
+          ],
+        }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("refuses more than ten compatible keys when the EVT has no kid", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture({
+      includeEvtKid: false,
+    });
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: Array.from({ length: 11 }, (_, index) => ({
+            ...fixture.issuerPublicJwk,
+            kid: `key-${String(index)}`,
+          })),
+        }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "JWKS_INVALID");
+  });
+
+  void it("does not count incompatible keys when the EVT has no kid", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture({
+      includeEvtKid: false,
+    });
+    const incompatibleKey = {
+      kty: "RSA",
+      e: "AQAB",
+      n: "AQ",
+    };
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata()),
+      [jwksUrl]: () =>
+        jsonResponse({
+          keys: [
+            fixture.issuerPublicJwk,
+            ...Array.from({ length: 10 }, () => incompatibleKey),
+          ],
+        }),
     });
 
     const result = await verifyIssuerSignature({
