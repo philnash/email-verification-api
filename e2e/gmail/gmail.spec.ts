@@ -95,6 +95,7 @@ test("verifies a real Gmail account with Chrome", async () => {
     diagnostics.origin = server.origin;
     context = await chromium.launchPersistentContext(profileDirectory, {
       channel: "chrome",
+      chromiumSandbox: true,
       headless: false,
       viewport: null,
       args: ["--enable-features=EmailVerificationProtocol"],

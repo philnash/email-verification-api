@@ -27,6 +27,7 @@
     "test:compile": "npm run clean:test && tsc -p tsconfig.test.json",
     "test": "npm run test:compile && node --test .test-dist/test/*.test.js",
     "test:e2e:gmail:harness": "npm run build && npm run typecheck:e2e:gmail && playwright test verifier-server.spec.ts --config e2e/gmail/playwright.config.ts",
+    "test:e2e:gmail:setup": "node e2e/gmail/setup-chrome.js",
     "test:e2e:gmail": "npm run build && npm run typecheck:e2e:gmail && playwright test gmail.spec.ts --config e2e/gmail/playwright.config.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
