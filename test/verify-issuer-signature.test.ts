@@ -625,14 +625,13 @@ void describe("verifyIssuerSignature", () => {
     }
   });
 
-  void it("requires issuer-bound HTTPS metadata endpoints", async () => {
+  void it("requires safe HTTPS metadata endpoints", async () => {
     const { token } = await createDnsVerifiedFixture();
     const invalidEndpoints = [
       "http://accounts.example.com/endpoint",
-      "https://attacker.test/endpoint",
-      "https://accounts.example.com.attacker.test/endpoint",
       "https://user@accounts.example.com/endpoint",
       "https://accounts.example.com:8443/endpoint",
+      "https://localhost/endpoint",
     ];
 
     for (const endpoint of invalidEndpoints) {
@@ -660,6 +659,33 @@ void describe("verifyIssuerSignature", () => {
     });
 
     assert.equal(result.ok, true);
+  });
+
+  void it("accepts safe cross-origin metadata endpoints", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const crossOriginIssuanceUrl =
+      "https://issuance.example.net/email-verification/issue";
+    const crossOriginJwksUrl =
+      "https://verifiable-credentials.example.net/email-verification/jwks";
+    const network = createFetchFixture({
+      [metadataUrl]: () =>
+        jsonResponse(
+          metadata({
+            issuance_endpoint: crossOriginIssuanceUrl,
+            jwks_uri: crossOriginJwksUrl,
+          }),
+        ),
+      [crossOriginJwksUrl]: () =>
+        jsonResponse({ keys: [fixture.issuerPublicJwk] }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(network.calls, [metadataUrl, crossOriginJwksUrl]);
   });
 
   void it("rejects unsafe metadata redirect response URLs", async () => {

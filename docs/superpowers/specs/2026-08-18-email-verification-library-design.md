@@ -295,10 +295,12 @@ successful JSON matching the metadata schema. Required properties are
 and defaults to `["EdDSA"]`; it must be nonempty when supplied and must never
 contain `none`.
 
-Metadata endpoint URLs must use HTTPS. Their host must equal the issuer hostname
-or be a true subdomain separated by a DNS label boundary. A hostname such as
-`issuer.example.attacker.test` does not match `issuer.example`. The same checks
-apply to the final response URL after redirects when the runtime exposes it.
+Metadata endpoint URLs must use HTTPS and a permitted network hostname. The
+metadata document itself remains issuer-bound, while an advertised JWKS may use
+a different HTTPS host, as current Gmail metadata does. The library checks the
+JWKS hostname immediately before Fetch, requires globally reachable resolved
+addresses, disables redirects, and requires any exposed final response URL to
+equal the requested URL.
 
 The library fetches `jwks_uri`, requires a successful JSON response, and parses a
 bounded nonempty set of public JWKs. It verifies the EVT compact JWS with `jose`,

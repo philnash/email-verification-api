@@ -15,7 +15,7 @@ The library verifies:
 - direct and selectively disclosed email claims;
 - the expected email, `email_verified` value, nonce, audience, and issue times;
 - DNS delegation from the email domain to the claimed issuer;
-- issuer metadata and JWKS endpoints, including issuer-bound HTTPS URLs;
+- issuer metadata and JWKS endpoints, including HTTPS and network-target safety;
 - the issuer signature on the EVT;
 - the KB-JWT signature with the holder key authenticated by that EVT; and
 - `sd_hash` over the exact presented EVT and disclosure sequence.
@@ -23,6 +23,34 @@ The library verifies:
 It does not issue tokens, implement the browser API, create or store nonces,
 prove that an inbox can receive mail, or replace an application's account and
 session security.
+
+## Guided Gmail end-to-end test
+
+The opt-in Gmail E2E uses installed desktop Chrome, a dedicated ignored profile,
+and the local `EmailVerificationProtocol` feature flag. It is intentionally not
+part of `npm test`, `npm run check`, or CI.
+
+First, bootstrap the dedicated profile in ordinary Chrome:
+
+```sh
+npm run test:e2e:gmail:setup
+```
+
+Sign in to Gmail in that window, then close Chrome. Run the guided verification:
+
+```sh
+npm run test:e2e:gmail
+```
+
+The test launches ordinary Chrome with a local debugging endpoint, then attaches
+Playwright for page observation and assertions. Complete and submit the verifier
+form in the Chrome window. The structured `verifyEmailToken()` result and safe
+browser diagnostics are written to `.e2e/results/latest.json`; the raw
+presentation token is not persisted. Failures also write
+`.e2e/results/failure.png` when the page can be captured.
+
+Chrome is detected at its standard macOS path. Set `CHROME_PATH` to the installed
+Chrome executable on other platforms.
 
 ## Installation
 

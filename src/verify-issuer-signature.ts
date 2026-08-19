@@ -89,7 +89,7 @@ export async function verifyIssuerSignature(
   });
   if (!metadataDocument.ok) return metadataDocument;
 
-  const metadataResult = parseMetadata(metadataDocument.value, token.issuer);
+  const metadataResult = parseMetadata(metadataDocument.value);
   if (!metadataResult.ok) return metadataResult;
   const metadata = metadataResult.value;
 
@@ -176,11 +176,16 @@ async function fetchJsonDocument({
   kind: DocumentKind;
   resolveHost: ResolveHost;
 }): Promise<Result<unknown>> {
-  const target = issuerBoundHttpsUrl(valueWithoutAsciiControls(url), issuer);
+  const target = safeHttpsUrl(
+    valueWithoutAsciiControls(url),
+    kind === "metadata" ? issuer : undefined,
+  );
   if (target === undefined) {
     return documentError(
       kind,
-      `${kind} target is not a permitted issuer-bound HTTPS URL.`,
+      kind === "metadata"
+        ? "metadata target is not a permitted issuer-bound HTTPS URL."
+        : "JWKS target is not a permitted HTTPS URL.",
     );
   }
 
@@ -223,8 +228,10 @@ async function fetchJsonDocument({
   }
   if (
     response.url !== "" &&
-    issuerBoundHttpsUrl(valueWithoutAsciiControls(response.url), issuer) ===
-      undefined
+    safeHttpsUrl(
+      valueWithoutAsciiControls(response.url),
+      kind === "metadata" ? issuer : undefined,
+    )?.href !== target.href
   ) {
     return documentError(
       kind,
@@ -247,7 +254,7 @@ async function fetchJsonDocument({
   }
 }
 
-function parseMetadata(value: unknown, issuer: string): Result<IssuerMetadata> {
+function parseMetadata(value: unknown): Result<IssuerMetadata> {
   let result: z.ZodSafeParseResult<IssuerMetadata>;
   try {
     result = IssuerMetadataSchema.safeParse(value);
@@ -266,18 +273,13 @@ function parseMetadata(value: unknown, issuer: string): Result<IssuerMetadata> {
   }
 
   if (
-    issuerBoundHttpsUrl(
-      valueWithoutAsciiControls(result.data.issuance_endpoint),
-      issuer,
-    ) === undefined ||
-    issuerBoundHttpsUrl(
-      valueWithoutAsciiControls(result.data.jwks_uri),
-      issuer,
-    ) === undefined
+    safeHttpsUrl(valueWithoutAsciiControls(result.data.issuance_endpoint)) ===
+      undefined ||
+    safeHttpsUrl(valueWithoutAsciiControls(result.data.jwks_uri)) === undefined
   ) {
     return issuerError(
       "METADATA_INVALID",
-      "Issuer metadata endpoints must be issuer-bound HTTPS URLs.",
+      "Issuer metadata endpoints must be permitted HTTPS URLs.",
     );
   }
 
@@ -302,9 +304,9 @@ function parseJwks(value: unknown): Result<JsonWebKeySet> {
   }
 }
 
-function issuerBoundHttpsUrl(
+function safeHttpsUrl(
   value: string | undefined,
-  issuer: string,
+  issuer?: string,
 ): URL | undefined {
   if (value === undefined) return undefined;
   try {
@@ -322,13 +324,15 @@ function issuerBoundHttpsUrl(
       ? url.hostname.slice(0, -1)
       : url.hostname;
     const normalizedHostname = hostname.toLowerCase();
+    if (!isSafeNetworkHostname(normalizedHostname)) return undefined;
     if (
-      normalizedHostname === issuer ||
-      normalizedHostname.endsWith(`.${issuer}`)
+      issuer !== undefined &&
+      normalizedHostname !== issuer &&
+      !normalizedHostname.endsWith(`.${issuer}`)
     ) {
-      return isSafeNetworkHostname(normalizedHostname) ? url : undefined;
+      return undefined;
     }
-    return undefined;
+    return url;
   } catch {
     return undefined;
   }
