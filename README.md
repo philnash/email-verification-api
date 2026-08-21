@@ -7,7 +7,19 @@ Instead, the browser will use a user's logged in session to their inbox to creat
 This project provides a function for web developers to verify the Email Verification Token (EVT).
 
 > [!Warning]
-> This library is targeting a draft specification that is under development. It may be out of date at times, but I will be updating it to match what is specified and supported by browsers and mailbox providers.
+> This library is targeting a draft specification that is under development. It may be out of date at times, but I will be updating it to match what is specified and supported by browsers and mailbox providers.\
+
+- [How to use](#how-to-use)
+  - [Installation](#installation)
+  - [Example app](#example-app)
+  - [Get an Email Verification Token](#get-an-email-verification-token)
+  - [Verifying the token](#verifying-the-token)
+- [Verification order](#verification-order)
+- [Errors and Results](#errors-and-results)
+- [Dependency injection](#dependency-injection)
+- [Developing](#developing)
+- [License](#license)
+
 
 ## How to use
 
@@ -18,6 +30,10 @@ First install the package:
 ```sh
 npm install email-verification-api
 ```
+
+### Example app
+
+There is an example Next.js application in the [example](./example/) directory. See the [README](./example/README.md) for how to run the example.
 
 ### Get an Email Verification Token
 

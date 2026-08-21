@@ -1,0 +1,5 @@
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+minimumReleaseAgeExclude:
+  - email-verification-api@0.1.0
