@@ -2,7 +2,7 @@
 
 This application uses the [email-verification-api](https://www.npmjs.com/package/email-verification-api) package to implement the Email Verification API within a Next.js application.
 
-> [!INFO]
+> [!NOTE]
 > While this is experimental, ensure you enable the [email-verification-protocol flag](chrome://flags/#email-verification-protocol) in Chrome settings.
 
 ## Running the app
