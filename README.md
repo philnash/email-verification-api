@@ -6,8 +6,12 @@ Instead, the browser will use a user's logged in session to their inbox to creat
 
 This project provides a function for web developers to verify the Email Verification Token (EVT).
 
+Read more about the [Email Verification API and how to use it](https://resend.com/blog/email-verification-api).
+
 > [!Warning]
 > This library is targeting a draft specification that is under development. It may be out of date at times, but I will be updating it to match what is specified and supported by browsers and mailbox providers.\
+
+There is a demo app in the [./example](./example/) directory and you can interact with it in this [hosted demo](https://verifyemails.vercel.app/).
 
 - [How to use](#how-to-use)
   - [Installation](#installation)

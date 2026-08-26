@@ -38,6 +38,14 @@ export default async function Home() {
         </p>
 
         <p>
+          Check out{" "}
+          <a href="https://resend.com/blog/email-verification-api">
+            how the Email Verification API works
+          </a>{" "}
+          in more detail.
+        </p>
+
+        <p>
           In this project, the verification is handled by the{" "}
           <a href="https://github.com/philnash/email-verification-api">
             email-verification-api package
