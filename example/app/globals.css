@@ -232,5 +232,8 @@ a:focus-visible {
 }
 
 .result--not-verified {
+  color: var(--accent);
+}
+.result--not-verified--error {
   color: var(--danger);
 }

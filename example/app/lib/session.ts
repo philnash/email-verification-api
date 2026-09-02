@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
+import { sessionSecret } from "./config";
 
 // Note: no `server-only` guard here — this module is imported from
 // `proxy.ts`, which runs outside the normal server/client component graph
@@ -9,11 +10,7 @@ const SESSION_COOKIE_NAME = "session";
 const SESSION_DURATION_SECONDS = 10 * 60; // 10 minutes: long enough to fill in a form, short enough to keep the nonce fresh
 
 function getSecretKey() {
-  const secret = process.env.SESSION_SECRET;
-  if (!secret) {
-    throw new Error("SESSION_SECRET environment variable is not set");
-  }
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(sessionSecret);
 }
 
 export type SessionPayload = {
@@ -37,7 +34,7 @@ export async function encryptSession(payload: SessionPayload) {
  * missing, expired, or has been tampered with.
  */
 export async function decryptSession(
-  sessionCookieValue: string | undefined
+  sessionCookieValue: string | undefined,
 ): Promise<SessionPayload | null> {
   if (!sessionCookieValue) {
     return null;

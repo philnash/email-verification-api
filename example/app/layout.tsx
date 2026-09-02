@@ -15,7 +15,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           content="Ah9at3HZ3FacP7dBHylaXdHz3Y1G6IXdv5SNDuEEhmQwKmaBhWeJye16salX949px/izfNSaDZeE6wgGBZfJogcAAABqeyJvcmlnaW4iOiJodHRwczovL3ZlcmlmeWVtYWlscy52ZXJjZWwuYXBwOjQ0MyIsImZlYXR1cmUiOiJFbWFpbFZlcmlmaWNhdGlvblByb3RvY29sIiwiZXhwaXJ5IjoxNzk0ODczNjAwfQ=="
         />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <div className="page">
+          <main>
+            <h1>Email Verification API</h1>
+            {children}
+          </main>
+          <footer>
+            Demo created by <a href="https://philna.sh/">Phil Nash</a> and{" "}
+            <a href="https://resend.com">Resend</a>
+          </footer>
+        </div>
+      </body>
     </html>
   );
 }

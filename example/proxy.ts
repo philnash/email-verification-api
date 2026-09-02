@@ -12,6 +12,7 @@ import {
 // response) means the page's Server Component can read the new value back
 // via `cookies()` during the very same render.
 export async function proxy(request: NextRequest) {
+  console.log("heeey");
   const nonce = randomUUID();
   const session = await encryptSession({ nonce });
 

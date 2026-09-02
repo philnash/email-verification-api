@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { decryptSession, SESSION_COOKIE_NAME } from "@/app/lib/session";
 import { verifyEmailToken } from "email-verification-api";
+import { sendVerificationEmail } from "@/app/lib/email";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
@@ -10,16 +11,18 @@ export async function POST(request: Request) {
 
   if (typeof email !== "string" || !email) {
     return NextResponse.json(
-      { verified: false, reason: "Missing email address." },
+      { verified: false, reason: "Missing email address.", error: true },
       { status: 400 },
     );
   }
 
   if (typeof token !== "string" || !token) {
+    const url = new URL(request.url);
+    await sendVerificationEmail(email, `${url.protocol}//${url.host}`);
     return NextResponse.json({
       verified: false,
       reason:
-        "No verification token was provided by the browser. You should fallback to verifying the email with an OTP code or magic link.",
+        "A verification email has been sent to your email address. Please check your inbox and click the link to verify your email.",
     });
   }
 

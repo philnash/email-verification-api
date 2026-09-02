@@ -3,8 +3,7 @@
 import { useId, useState } from "react";
 
 type VerifyResult =
-  | { verified: true }
-  | { verified: false; reason: string };
+  { verified: true } | { verified: false; reason: string; error?: boolean };
 
 type Status = "idle" | "submitting" | "done";
 
@@ -13,7 +12,7 @@ export function VerifyForm({ nonce }: { nonce: string }) {
   const [result, setResult] = useState<VerifyResult | null>(null);
   const resultId = useId();
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("submitting");
     setResult(null);
@@ -30,7 +29,9 @@ export function VerifyForm({ nonce }: { nonce: string }) {
     } catch {
       setResult({
         verified: false,
-        reason: "Something went wrong while checking your email. Please try again.",
+        reason:
+          "Something went wrong while checking your email. Please try again.",
+        error: true,
       });
     } finally {
       setStatus("done");
@@ -73,7 +74,11 @@ export function VerifyForm({ nonce }: { nonce: string }) {
           <span className="result--verified">✓ Email verified.</span>
         )}
         {result && !result.verified && (
-          <span className="result--not-verified">✗ Not verified: {result.reason}</span>
+          <span
+            className={`${result.error ? "result--not-verified--error" : "result--not-verified"}`}
+          >
+            {result.reason}
+          </span>
         )}
       </p>
     </div>
