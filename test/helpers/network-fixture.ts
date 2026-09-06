@@ -17,10 +17,12 @@ export function createFetchFixture(
 ) {
   const calls: string[] = [];
   const inits: (RequestInit | undefined)[] = [];
+  const signals: (AbortSignal | null | undefined)[] = [];
 
   return {
     calls,
     inits,
+    signals,
     fetch: async (
       input: string | URL | Request,
       init?: RequestInit,
@@ -33,6 +35,7 @@ export function createFetchFixture(
             : input.url;
       calls.push(url);
       inits.push(init);
+      signals.push(init?.signal);
       const route = routes[url];
       if (route === undefined) {
         return new Response("not found", { status: 404 });

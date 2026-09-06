@@ -30,6 +30,13 @@ const secureFetchInit = {
   credentials: "omit",
 };
 
+function assertSecureFetchInit(init: RequestInit | undefined): void {
+  assert.equal(init?.method, secureFetchInit.method);
+  assert.equal(init.redirect, secureFetchInit.redirect);
+  assert.equal(init.credentials, secureFetchInit.credentials);
+  assert.equal(init.signal instanceof AbortSignal, true);
+}
+
 function publicResolveHost(): Promise<
   readonly { address: string; family: 4 | 6 }[]
 > {
@@ -155,6 +162,18 @@ function rejectWith(reason: unknown) {
   };
 }
 
+function never<T>(): Promise<T> {
+  return new Promise<T>(() => undefined);
+}
+
+function requestUrl(input: string | URL | Request): string {
+  return typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.href
+      : input.url;
+}
+
 void describe("verifyIssuerSignature", () => {
   void it("fetches metadata then JWKS and verifies the EVT signature", async () => {
     const { fixture, token } = await createDnsVerifiedFixture();
@@ -167,7 +186,12 @@ void describe("verifyIssuerSignature", () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(network.calls, [metadataUrl, jwksUrl]);
-    assert.deepEqual(network.inits, [secureFetchInit, secureFetchInit]);
+    assert.equal(network.inits.length, 2);
+    for (const init of network.inits) assertSecureFetchInit(init);
+    assert.equal(network.signals.length, 2);
+    for (const signal of network.signals) {
+      assert.equal(signal instanceof AbortSignal, true);
+    }
     assert.deepEqual(result.value.token, token);
     assert.deepEqual(result.value.metadata, metadata());
   });
@@ -184,9 +208,11 @@ void describe("verifyIssuerSignature", () => {
     });
 
     assertIssuerError(redirectResult, "METADATA_FETCH_FAILED");
-    assert.deepEqual(redirectCalls, [
-      { input: metadataUrl, init: secureFetchInit },
-    ]);
+    assert.deepEqual(
+      redirectCalls.map(({ input }) => input),
+      [metadataUrl],
+    );
+    assertSecureFetchInit(redirectCalls[0]?.init as RequestInit | undefined);
 
     const metadataRedirect = await verifyIssuerSignature({
       token,
@@ -205,6 +231,333 @@ void describe("verifyIssuerSignature", () => {
     });
     assertIssuerError(jwksRedirect, "JWKS_INVALID");
     assert.deepEqual(network.calls, [metadataUrl, jwksUrl]);
+  });
+
+  void it("times out each issuer external operation and starts no later work", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const cases = [
+      {
+        name: "metadata hostname resolution",
+        options: { resolveHostTimeoutMs: 1 },
+        stall: "metadata resolve",
+      },
+      {
+        name: "metadata Fetch",
+        options: { metadataFetchTimeoutMs: 1 },
+        stall: "metadata fetch",
+      },
+      {
+        name: "metadata body",
+        options: { metadataFetchTimeoutMs: 1 },
+        stall: "metadata body",
+      },
+      {
+        name: "JWKS hostname resolution",
+        options: { resolveHostTimeoutMs: 1 },
+        stall: "JWKS resolve",
+      },
+      {
+        name: "JWKS Fetch",
+        options: { jwksFetchTimeoutMs: 1 },
+        stall: "JWKS fetch",
+      },
+      {
+        name: "JWKS body",
+        options: { jwksFetchTimeoutMs: 1 },
+        stall: "JWKS body",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const resolveCalls: string[] = [];
+      const fetchCalls: string[] = [];
+      const resolveHost = (hostname: string) => {
+        resolveCalls.push(hostname);
+        if (
+          testCase.stall === "metadata resolve" ||
+          (testCase.stall === "JWKS resolve" && resolveCalls.length === 2)
+        ) {
+          return never<readonly { address: string; family: 4 | 6 }[]>();
+        }
+        return publicResolveHost();
+      };
+      const fetch = (input: string | URL | Request) => {
+        const url = requestUrl(input);
+        fetchCalls.push(url);
+        if (
+          testCase.stall === "metadata fetch" ||
+          (testCase.stall === "JWKS fetch" && url === jwksUrl)
+        ) {
+          return never<Response>();
+        }
+        if (url === metadataUrl) {
+          if (testCase.stall === "metadata body") {
+            return Promise.resolve({
+              ok: true,
+              status: 200,
+              url: metadataUrl,
+              redirected: false,
+              json: () => never<unknown>(),
+            });
+          }
+          return Promise.resolve(jsonResponse(metadata()));
+        }
+        if (testCase.stall === "JWKS body") {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            url: jwksUrl,
+            redirected: false,
+            json: () => never<unknown>(),
+          });
+        }
+        return Promise.resolve(
+          jsonResponse({ keys: [fixture.issuerPublicJwk] }),
+        );
+      };
+
+      const result = await verifyIssuerSignature({
+        token,
+        resolveHost,
+        fetch,
+        ...testCase.options,
+      });
+
+      assertIssuerError(result, "REQUEST_TIMEOUT");
+      assert.equal(JSON.stringify(result).includes(testCase.name), false);
+      const expectedResolveCalls = testCase.stall.startsWith("metadata")
+        ? ["accounts.example.com"]
+        : ["accounts.example.com", "keys.accounts.example.com"];
+      const expectedFetchCalls =
+        testCase.stall === "metadata resolve"
+          ? []
+          : testCase.stall.startsWith("metadata") ||
+              testCase.stall === "JWKS resolve"
+            ? [metadataUrl]
+            : [metadataUrl, jwksUrl];
+      assert.deepEqual(resolveCalls, expectedResolveCalls, testCase.name);
+      assert.deepEqual(fetchCalls, expectedFetchCalls, testCase.name);
+    }
+  });
+
+  void it("lets the caller controller abort each issuer external operation", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const stalls = [
+      "metadata resolve",
+      "metadata fetch",
+      "metadata body",
+      "JWKS resolve",
+      "JWKS fetch",
+      "JWKS body",
+    ] as const;
+
+    for (const stall of stalls) {
+      const controller = new AbortController();
+      const resolveCalls: string[] = [];
+      const fetchCalls: string[] = [];
+      const stop = <T>(): Promise<T> => {
+        controller.abort("DO_NOT_EXPOSE");
+        return never<T>();
+      };
+      const resolveHost = (hostname: string) => {
+        resolveCalls.push(hostname);
+        if (
+          stall === "metadata resolve" ||
+          (stall === "JWKS resolve" && resolveCalls.length === 2)
+        ) {
+          return stop<readonly { address: string; family: 4 | 6 }[]>();
+        }
+        return publicResolveHost();
+      };
+      const fetch = (input: string | URL | Request) => {
+        const url = requestUrl(input);
+        fetchCalls.push(url);
+        if (
+          stall === "metadata fetch" ||
+          (stall === "JWKS fetch" && url === jwksUrl)
+        ) {
+          return stop<Response>();
+        }
+        if (url === metadataUrl) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            url: metadataUrl,
+            redirected: false,
+            json:
+              stall === "metadata body"
+                ? () => stop<unknown>()
+                : () => Promise.resolve(metadata()),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          url: jwksUrl,
+          redirected: false,
+          json:
+            stall === "JWKS body"
+              ? () => stop<unknown>()
+              : () => Promise.resolve({ keys: [fixture.issuerPublicJwk] }),
+        });
+      };
+
+      const result = await verifyIssuerSignature({
+        token,
+        signal: controller.signal,
+        resolveHostTimeoutMs: null,
+        metadataFetchTimeoutMs: null,
+        jwksFetchTimeoutMs: null,
+        resolveHost,
+        fetch,
+      });
+
+      assertIssuerError(result, "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+      const expectedResolveCalls = stall.startsWith("metadata")
+        ? ["accounts.example.com"]
+        : ["accounts.example.com", "keys.accounts.example.com"];
+      const expectedFetchCalls =
+        stall === "metadata resolve"
+          ? []
+          : stall.startsWith("metadata") || stall === "JWKS resolve"
+            ? [metadataUrl]
+            : [metadataUrl, jwksUrl];
+      assert.deepEqual(resolveCalls, expectedResolveCalls, stall);
+      assert.deepEqual(fetchCalls, expectedFetchCalls, stall);
+    }
+  });
+
+  void it("actively aborts the signal while a response body is pending", async () => {
+    const { token } = await createDnsVerifiedFixture();
+    let fetchSignal: AbortSignal | null | undefined;
+    let bodyObservedAbort = false;
+
+    const result = await verifyIssuerSignature({
+      token,
+      metadataFetchTimeoutMs: 1,
+      fetch: (_input: string | URL | Request, init?: RequestInit) => {
+        fetchSignal = init?.signal;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          url: metadataUrl,
+          redirected: false,
+          json: () => {
+            fetchSignal?.addEventListener(
+              "abort",
+              () => {
+                bodyObservedAbort = true;
+              },
+              { once: true },
+            );
+            return never<unknown>();
+          },
+        });
+      },
+    });
+
+    assertIssuerError(result, "REQUEST_TIMEOUT");
+    assert.equal(fetchSignal?.aborted, true);
+    assert.equal(bodyObservedAbort, true);
+  });
+
+  void it("keeps an unrelated AbortError classified as a metadata Fetch failure", async () => {
+    const { token } = await createDnsVerifiedFixture();
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: () => Promise.reject(new DOMException("custom", "AbortError")),
+    });
+
+    assertIssuerError(result, "METADATA_FETCH_FAILED");
+  });
+
+  void it("checks caller cancellation after local issuer document parsing", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+
+    for (const documentKind of ["metadata", "JWKS"] as const) {
+      const controller = new AbortController();
+      const fetchCalls: string[] = [];
+      const metadataDocument = metadata();
+      if (documentKind === "metadata") {
+        metadataDocument["signing_alg_values_supported"] = [];
+        Object.defineProperty(metadataDocument, "cancel", {
+          enumerable: true,
+          get() {
+            controller.abort("DO_NOT_EXPOSE");
+            return true;
+          },
+        });
+      }
+      const jwksDocument: Record<string, unknown> = {};
+      Object.defineProperty(jwksDocument, "keys", {
+        enumerable: true,
+        get() {
+          if (documentKind === "JWKS") {
+            controller.abort("DO_NOT_EXPOSE");
+            return [];
+          }
+          return [fixture.issuerPublicJwk];
+        },
+      });
+
+      const result = await verifyIssuerSignature({
+        token,
+        signal: controller.signal,
+        fetch: (input: string | URL | Request) => {
+          const url = requestUrl(input);
+          fetchCalls.push(url);
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            url,
+            redirected: false,
+            json: () =>
+              Promise.resolve(
+                url === metadataUrl ? metadataDocument : jwksDocument,
+              ),
+          });
+        },
+      });
+
+      assertIssuerError(result, "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+      assert.deepEqual(
+        fetchCalls,
+        documentKind === "metadata" ? [metadataUrl] : [metadataUrl, jwksUrl],
+      );
+    }
+  });
+
+  void it("accepts nullable issuer timeouts and rejects invalid request controls", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const network = createFetchFixture(validRoutes(fixture.issuerPublicJwk));
+    const success = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+      resolveHostTimeoutMs: null,
+      metadataFetchTimeoutMs: null,
+      jwksFetchTimeoutMs: null,
+    });
+    assert.equal(success.ok, true);
+
+    const invalidInputs = [
+      { resolveHostTimeoutMs: 0 },
+      { resolveHostTimeoutMs: 1.5 },
+      { resolveHostTimeoutMs: Number.POSITIVE_INFINITY },
+      { metadataFetchTimeoutMs: 0 },
+      { metadataFetchTimeoutMs: 1.5 },
+      { metadataFetchTimeoutMs: Number.POSITIVE_INFINITY },
+      { jwksFetchTimeoutMs: 0 },
+      { jwksFetchTimeoutMs: 1.5 },
+      { jwksFetchTimeoutMs: Number.POSITIVE_INFINITY },
+      { signal: {} },
+    ];
+    for (const invalidInput of invalidInputs) {
+      const result = await verifyIssuerSignature({ token, ...invalidInput });
+      assertIssuerError(result, "INVALID_INPUT");
+    }
   });
 
   void it("resolves each target immediately before its Fetch call", async () => {

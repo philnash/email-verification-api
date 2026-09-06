@@ -6,15 +6,24 @@ import {
   validateResolvedAddresses,
 } from "./network-safety.js";
 import { parseToken } from "./parse-token.js";
+import {
+  checkInterruption,
+  createRequestControl,
+  interruptionResult,
+  runControlledOperation,
+  type RequestControl,
+} from "./request-control.js";
 import { err, errorCause, ok, type Result } from "./result.js";
 import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
+  AbortSignalSchema,
   DnsVerifiedTokenSchema,
   defaultResolveHost,
   IssuerMetadataSchema,
   IssuerVerifiedTokenSchema,
   JsonWebKeySetSchema,
   ResolveHostSchema,
+  TimeoutMillisecondsSchema,
   type IssuerMetadata,
   type IssuerVerifiedToken,
   type JsonWebKeySet,
@@ -40,6 +49,16 @@ const VerifyIssuerSignatureInputSchema = z.object({
   resolveHost: ResolveHostSchema.optional().transform(
     (value) => value ?? defaultResolveHost,
   ),
+  signal: AbortSignalSchema.optional(),
+  resolveHostTimeoutMs: TimeoutMillisecondsSchema.optional().transform(
+    (value) => value ?? null,
+  ),
+  metadataFetchTimeoutMs: TimeoutMillisecondsSchema.optional().transform(
+    (value) => value ?? null,
+  ),
+  jwksFetchTimeoutMs: TimeoutMillisecondsSchema.optional().transform(
+    (value) => value ?? null,
+  ),
 });
 
 const FetchResponseSchema = z.looseObject({
@@ -56,7 +75,36 @@ export async function verifyIssuerSignature(
   const inputResult = parseInput(input);
   if (!inputResult.ok) return inputResult;
 
-  const { token: inputToken, fetch, resolveHost } = inputResult.value;
+  const { signal } = inputResult.value;
+  return verifyIssuerSignatureWithControl(
+    inputResult.value,
+    createRequestControl({
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: null,
+    }),
+  );
+}
+
+export async function verifyIssuerSignatureWithControl(
+  input: z.infer<typeof VerifyIssuerSignatureInputSchema>,
+  control: RequestControl,
+): Promise<Result<IssuerVerifiedToken>> {
+  const {
+    token: inputToken,
+    fetch,
+    resolveHost,
+    resolveHostTimeoutMs,
+    metadataFetchTimeoutMs,
+    jwksFetchTimeoutMs,
+  } = input;
+  const initialInterruption = checkInterruption(control);
+  if (initialInterruption !== undefined) {
+    return interruptionResult(
+      "issuer",
+      "Issuer verification",
+      initialInterruption,
+    );
+  }
   const canonicalIssuerResult = canonicalIssuer(inputToken.issuer);
   if (
     !canonicalIssuerResult.ok ||
@@ -74,22 +122,52 @@ export async function verifyIssuerSignature(
     );
   }
 
-  const authenticatedTokenResult = await reparseDnsVerifiedToken(inputToken);
+  const controlledAuthenticatedToken = await runControlledOperation(
+    control,
+    null,
+    () => reparseDnsVerifiedToken(inputToken),
+  );
+  if (!controlledAuthenticatedToken.ok) {
+    if ("interruption" in controlledAuthenticatedToken) {
+      return interruptionResult(
+        "issuer",
+        "Issuer token parsing",
+        controlledAuthenticatedToken.interruption,
+      );
+    }
+    return issuerError(
+      "INVALID_INPUT",
+      "The exact token presentation could not be parsed safely.",
+      controlledAuthenticatedToken.cause,
+    );
+  }
+  const authenticatedTokenResult = controlledAuthenticatedToken.value;
   if (!authenticatedTokenResult.ok) return authenticatedTokenResult;
   const token = authenticatedTokenResult.value;
 
   const metadataUrl = `https://${token.issuer}/.well-known/email-verification`;
 
   const metadataDocument = await fetchJsonDocument({
+    control,
     fetch,
     url: metadataUrl,
     issuer: token.issuer,
     kind: "metadata",
     resolveHost,
+    resolveHostTimeoutMs,
+    timeoutMs: metadataFetchTimeoutMs,
   });
   if (!metadataDocument.ok) return metadataDocument;
 
   const metadataResult = parseMetadata(metadataDocument.value);
+  const metadataInterruption = checkInterruption(control);
+  if (metadataInterruption !== undefined) {
+    return interruptionResult(
+      "issuer",
+      "Issuer metadata processing",
+      metadataInterruption,
+    );
+  }
   if (!metadataResult.ok) return metadataResult;
   const metadata = metadataResult.value;
 
@@ -102,23 +180,51 @@ export async function verifyIssuerSignature(
   }
 
   const jwksDocument = await fetchJsonDocument({
+    control,
     fetch,
     url: metadata.jwks_uri,
     issuer: token.issuer,
     kind: "JWKS",
     resolveHost,
+    resolveHostTimeoutMs,
+    timeoutMs: jwksFetchTimeoutMs,
   });
   if (!jwksDocument.ok) return jwksDocument;
 
   const jwksResult = parseJwks(jwksDocument.value);
+  const jwksInterruption = checkInterruption(control);
+  if (jwksInterruption !== undefined) {
+    return interruptionResult(
+      "issuer",
+      "Issuer JWKS processing",
+      jwksInterruption,
+    );
+  }
   if (!jwksResult.ok) return jwksResult;
 
-  const signatureResult = await verifyEvtSignature(
-    token.token.token.evt.compact,
-    algorithm,
-    token.token.token.evt.header.kid,
-    jwksResult.value,
+  const controlledSignature = await runControlledOperation(control, null, () =>
+    verifyEvtSignature(
+      token.token.token.evt.compact,
+      algorithm,
+      token.token.token.evt.header.kid,
+      jwksResult.value,
+    ),
   );
+  if (!controlledSignature.ok) {
+    if ("interruption" in controlledSignature) {
+      return interruptionResult(
+        "issuer",
+        "EVT signature verification",
+        controlledSignature.interruption,
+      );
+    }
+    return issuerError(
+      "EVT_SIGNATURE_INVALID",
+      "The EVT signature could not be verified safely.",
+      controlledSignature.cause,
+    );
+  }
+  const signatureResult = controlledSignature.value;
   if (!signatureResult.ok) return signatureResult;
 
   try {
@@ -126,6 +232,14 @@ export async function verifyIssuerSignature(
       token,
       metadata,
     });
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult(
+        "issuer",
+        "Issuer verification",
+        finalInterruption,
+      );
+    }
     if (!verifiedResult.success) {
       return issuerError(
         "INVALID_INPUT",
@@ -134,6 +248,14 @@ export async function verifyIssuerSignature(
     }
     return ok(verifiedResult.data);
   } catch (cause) {
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult(
+        "issuer",
+        "Issuer verification",
+        finalInterruption,
+      );
+    }
     return issuerError(
       "INVALID_INPUT",
       "The issuer-verified token could not be represented safely.",
@@ -150,7 +272,7 @@ function parseInput(
     if (!result.success) {
       return issuerError(
         "INVALID_INPUT",
-        "Issuer verification requires a DNS-verified token and an optional Fetch implementation.",
+        "Issuer verification requires a DNS-verified token and optional Fetch, hostname resolver, signal, and timeout controls.",
       );
     }
     return ok(result.data);
@@ -164,17 +286,23 @@ function parseInput(
 }
 
 async function fetchJsonDocument({
+  control,
   fetch,
   url,
   issuer,
   kind,
   resolveHost,
+  resolveHostTimeoutMs,
+  timeoutMs,
 }: {
+  control: RequestControl;
   fetch: FetchFunction;
   url: string;
   issuer: string;
   kind: DocumentKind;
   resolveHost: ResolveHost;
+  resolveHostTimeoutMs: number | null;
+  timeoutMs: number | null;
 }): Promise<Result<unknown>> {
   const target = safeHttpsUrl(
     valueWithoutAsciiControls(url),
@@ -190,68 +318,84 @@ async function fetchJsonDocument({
   }
 
   const resolutionResult = await resolveNetworkTarget(
+    control,
+    resolveHostTimeoutMs,
     resolveHost,
     target.hostname,
     kind,
   );
   if (!resolutionResult.ok) return resolutionResult;
 
-  let responseValue: unknown;
-  try {
-    responseValue = await fetch(url, {
-      method: "GET",
-      redirect: "error",
-      credentials: "omit",
-    });
-  } catch (cause) {
-    return fetchError(kind, `${kind} could not be fetched.`, cause);
+  const controlled = await runControlledOperation(
+    control,
+    timeoutMs,
+    async (signal): Promise<Result<unknown>> => {
+      const responseValue = await fetch(url, {
+        method: "GET",
+        redirect: "error",
+        credentials: "omit",
+        signal,
+      });
+      let responseResult: z.ZodSafeParseResult<
+        z.infer<typeof FetchResponseSchema>
+      >;
+      try {
+        responseResult = FetchResponseSchema.safeParse(responseValue);
+      } catch (cause) {
+        return fetchError(
+          kind,
+          `${kind} Fetch returned an unreadable response.`,
+          cause,
+        );
+      }
+      if (!responseResult.success) {
+        return fetchError(kind, `${kind} Fetch returned an invalid response.`);
+      }
+      const response = responseResult.data;
+      if (response.redirected) {
+        return documentError(kind, `${kind} response must not be redirected.`);
+      }
+      if (
+        response.url !== "" &&
+        safeHttpsUrl(
+          valueWithoutAsciiControls(response.url),
+          kind === "metadata" ? issuer : undefined,
+        )?.href !== target.href
+      ) {
+        return documentError(
+          kind,
+          `${kind} was returned from an unsafe redirect URL.`,
+        );
+      }
+      if (!response.ok) {
+        return fetchError(
+          kind,
+          `${kind} request failed with HTTP status ${String(response.status)}.`,
+        );
+      }
+      try {
+        return ok(await Reflect.apply(response.json, responseValue, []));
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+        // JSON parser messages can contain response text, so do not expose the cause.
+        return documentError(
+          kind,
+          `${kind} response did not contain valid JSON.`,
+        );
+      }
+    },
+  );
+  if (!controlled.ok) {
+    if ("interruption" in controlled) {
+      return interruptionResult(
+        "issuer",
+        `${kind} request`,
+        controlled.interruption,
+      );
+    }
+    return fetchError(kind, `${kind} could not be fetched.`, controlled.cause);
   }
-
-  let responseResult: z.ZodSafeParseResult<z.infer<typeof FetchResponseSchema>>;
-  try {
-    responseResult = FetchResponseSchema.safeParse(responseValue);
-  } catch (cause) {
-    return fetchError(
-      kind,
-      `${kind} Fetch returned an unreadable response.`,
-      cause,
-    );
-  }
-
-  if (!responseResult.success) {
-    return fetchError(kind, `${kind} Fetch returned an invalid response.`);
-  }
-
-  const response = responseResult.data;
-  if (response.redirected) {
-    return documentError(kind, `${kind} response must not be redirected.`);
-  }
-  if (
-    response.url !== "" &&
-    safeHttpsUrl(
-      valueWithoutAsciiControls(response.url),
-      kind === "metadata" ? issuer : undefined,
-    )?.href !== target.href
-  ) {
-    return documentError(
-      kind,
-      `${kind} was returned from an unsafe redirect URL.`,
-    );
-  }
-
-  if (!response.ok) {
-    return fetchError(
-      kind,
-      `${kind} request failed with HTTP status ${String(response.status)}.`,
-    );
-  }
-
-  try {
-    return ok(await Reflect.apply(response.json, responseValue, []));
-  } catch {
-    // JSON parser messages can contain response text, so do not expose the cause.
-    return documentError(kind, `${kind} response did not contain valid JSON.`);
-  }
+  return controlled.value;
 }
 
 function parseMetadata(value: unknown): Result<IssuerMetadata> {
@@ -343,22 +487,31 @@ function valueWithoutAsciiControls(value: string): string | undefined {
 }
 
 async function resolveNetworkTarget(
+  control: RequestControl,
+  timeoutMs: number | null,
   resolveHost: ResolveHost,
   hostname: string,
   kind: DocumentKind,
 ): Promise<Result<true>> {
-  let addresses: unknown;
-  try {
-    addresses = await resolveHost(hostname);
-  } catch (cause) {
+  const controlled = await runControlledOperation(control, timeoutMs, () =>
+    resolveHost(hostname),
+  );
+  if (!controlled.ok) {
+    if ("interruption" in controlled) {
+      return interruptionResult(
+        "issuer",
+        `${kind} target hostname resolution`,
+        controlled.interruption,
+      );
+    }
     return fetchError(
       kind,
       `${kind} target hostname could not be resolved.`,
-      cause,
+      controlled.cause,
     );
   }
 
-  const validation = validateResolvedAddresses(addresses);
+  const validation = validateResolvedAddresses(controlled.value);
   if (!validation.ok) {
     return documentError(
       kind,
