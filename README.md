@@ -156,7 +156,7 @@ await verifyEmailToken({
 });
 ```
 
-Exact age and tolerance boundaries are accepted. Both age-related timing options must be positive integers.
+Exact age and tolerance boundaries are accepted. Both age-related timing options must be nonnegative numbers.
 
 On success, the result contains authenticated values:
 
@@ -230,8 +230,8 @@ Pass network and clock implementations per verification call when a runtime, tes
 
 ```ts
 import { lookup, resolveTxt } from "node:dns/promises";
-import { verifyEmailToken } from "email-verification";
-import type { ResolveHost } from "email-verification";
+import { verifyEmailToken } from "email-verification-api";
+import type { ResolveHost } from "email-verification-api";
 
 declare const tokenFromBrowser: string;
 declare const nonceForSession: string;
