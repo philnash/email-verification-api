@@ -2,9 +2,10 @@
 
 ## Goal
 
-Bound every external operation performed during email-token verification and let
-callers cancel verification with an `AbortSignal`. Preserve the library's
-non-throwing `Result` API and identify cancellation separately from timeout.
+Let callers bound every external operation performed during email-token
+verification and cancel verification with an `AbortSignal`. Preserve the
+library's non-throwing `Result` API and identify cancellation separately from
+timeout.
 
 ## Public API
 
@@ -26,33 +27,32 @@ type VerifyEmailTokenInput = {
 };
 ```
 
-The defaults are:
+Timeouts are opt-in. The defaults are:
 
 ```ts
-timeoutMs: 10_000,
+timeoutMs: null,
 timeouts: {
-  resolveTxtMs: 2_000,
-  resolveHostMs: 2_000,
-  metadataFetchMs: 4_000,
-  jwksFetchMs: 4_000,
+  resolveTxtMs: null,
+  resolveHostMs: null,
+  metadataFetchMs: null,
+  jwksFetchMs: null,
 }
 ```
 
-Omitting an option uses its default. Setting an individual value to `null`
-disables that limit. Setting `timeouts` to `null` disables every per-operation
-limit. Setting `timeoutMs` to `null` disables the overall limit. A caller that
-wants no time limits sets both `timeoutMs` and `timeouts` to `null`.
+Omitting an option or setting it to `null` leaves that limit disabled. Setting
+`timeouts` to `null` disables every per-operation limit. This preserves the
+library's existing unbounded behavior unless the relying application chooses a
+timeout policy.
 
 Numeric timeout values are positive finite integers measured in milliseconds.
 Invalid timeout or signal values return the existing `INVALID_INPUT` result.
 
 The public stage functions expose the relevant subset of the same controls:
 
-- `verifyDnsDelegation()` accepts `signal` and `timeoutMs`, whose default is
-  2,000 ms and which applies to its TXT lookup.
+- `verifyDnsDelegation()` accepts `signal` and `timeoutMs`, which applies to its
+  TXT lookup and defaults to `null`.
 - `verifyIssuerSignature()` accepts `signal`, `resolveHostTimeoutMs`,
-  `metadataFetchTimeoutMs`, and `jwksFetchTimeoutMs`, with the same defaults as
-  the orchestrator.
+  `metadataFetchTimeoutMs`, and `jwksFetchTimeoutMs`. Each defaults to `null`.
 
 The orchestrator combines its caller signal and overall deadline before passing
 them to the stages. Stage-level APIs do not invent an additional overall
@@ -130,7 +130,8 @@ trust order or network-safety checks. No new runtime dependency is added.
 
 Tests cover:
 
-- defaults, overrides, `null` opt-outs, and invalid input;
+- unbounded defaults, finite overrides, explicit `null` values, and invalid
+  input;
 - timeout of TXT resolution, both hostname resolutions, metadata fetch/body,
   and JWKS fetch/body;
 - the overall deadline limiting a longer per-operation timeout;
@@ -146,12 +147,26 @@ The full typecheck, unit test, lint, format, and build checks must pass.
 ## Documentation
 
 The README optional-arguments table will include `signal`, `timeoutMs`, and
-`timeouts`, with their defaults. A concise example will demonstrate:
+`timeouts`, and state that every timeout defaults to `null`. A concise example
+will demonstrate:
 
 - cancelling with `AbortController`;
 - overriding one timeout;
 - distinguishing `REQUEST_ABORTED` from `REQUEST_TIMEOUT`; and
 - using `null` to disable individual, per-operation, or overall limits.
+
+The README will recommend, but not apply, this profile for an interactive
+verification flow:
+
+```ts
+timeoutMs: 10_000,
+timeouts: {
+  resolveTxtMs: 2_000,
+  resolveHostMs: 2_000,
+  metadataFetchMs: 4_000,
+  jwksFetchMs: 4_000,
+}
+```
 
 The README will state that Fetch is actively aborted, while Node DNS work can
 continue internally after the verifier has returned.
