@@ -512,6 +512,14 @@ async function resolveNetworkTarget(
   }
 
   const validation = validateResolvedAddresses(controlled.value);
+  const validationInterruption = checkInterruption(control);
+  if (validationInterruption !== undefined) {
+    return interruptionResult(
+      "issuer",
+      `${kind} target hostname resolution`,
+      validationInterruption,
+    );
+  }
   if (!validation.ok) {
     return documentError(
       kind,

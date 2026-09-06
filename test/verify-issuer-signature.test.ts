@@ -691,6 +691,36 @@ void describe("verifyIssuerSignature", () => {
     }
   });
 
+  void it("prefers caller cancellation triggered while validating resolver output", async () => {
+    const { token } = await createDnsVerifiedFixture();
+    const controller = new AbortController();
+    let fetchCalls = 0;
+    const hostileAddresses = new Proxy<unknown[]>([], {
+      get(target, property, receiver): unknown {
+        if (property === "length") {
+          controller.abort("DO_NOT_EXPOSE");
+          throw new Error("resolver output unavailable");
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      signal: controller.signal,
+      resolveHost: () => Promise.resolve(hostileAddresses),
+      fetch: () => {
+        fetchCalls += 1;
+        return Promise.resolve(jsonResponse(metadata()));
+      },
+    });
+
+    assertIssuerError(result, "REQUEST_ABORTED");
+    assert.equal(fetchCalls, 0);
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
   void it("leaves default lookup limits and malformed-output classification to the request boundary", async () => {
     const { token } = await createDnsVerifiedFixture();
     const excessive = Array.from({ length: 21 }, () => ({
