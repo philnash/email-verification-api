@@ -186,6 +186,39 @@ export const ResolveHostSchema = z.custom<ResolveHost>(
   (value) => typeof value === "function",
 );
 
+export const TimeoutMillisecondsSchema = z.number().int().positive().nullable();
+export const AbortSignalSchema = z.custom<AbortSignal>(
+  (value) => value instanceof AbortSignal,
+);
+
+export const ExternalRequestTimeoutsSchema = z.object({
+  resolveTxtMs: TimeoutMillisecondsSchema.optional(),
+  resolveHostMs: TimeoutMillisecondsSchema.optional(),
+  metadataFetchMs: TimeoutMillisecondsSchema.optional(),
+  jwksFetchMs: TimeoutMillisecondsSchema.optional(),
+});
+
+export type ExternalRequestTimeouts = z.input<
+  typeof ExternalRequestTimeoutsSchema
+>;
+export interface NormalizedExternalRequestTimeouts {
+  resolveTxtMs: number | null;
+  resolveHostMs: number | null;
+  metadataFetchMs: number | null;
+  jwksFetchMs: number | null;
+}
+
+function normalizeExternalRequestTimeouts(
+  value: ExternalRequestTimeouts | null | undefined,
+): NormalizedExternalRequestTimeouts {
+  return {
+    resolveTxtMs: value?.resolveTxtMs ?? null,
+    resolveHostMs: value?.resolveHostMs ?? null,
+    metadataFetchMs: value?.metadataFetchMs ?? null,
+    jwksFetchMs: value?.jwksFetchMs ?? null,
+  };
+}
+
 export const ExpectedValuesInputSchema = z.object({
   token: ParsedTokenSchema,
   email: z.email(),
@@ -254,6 +287,13 @@ export const VerifyEmailTokenInputSchema = z.object({
     (value) => value ?? defaultResolveHost,
   ),
   now: ClockSchema,
+  signal: AbortSignalSchema.optional(),
+  timeoutMs: TimeoutMillisecondsSchema.optional().transform(
+    (value) => value ?? null,
+  ),
+  timeouts: ExternalRequestTimeoutsSchema.nullable()
+    .optional()
+    .transform(normalizeExternalRequestTimeouts),
 });
 
 export const VerifiedEmailSchema = KeyBindingVerifiedTokenSchema;

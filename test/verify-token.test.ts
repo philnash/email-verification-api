@@ -186,6 +186,14 @@ void describe("verifyEmailToken", () => {
     assert.equal(parsed.resolveTxt, defaultResolveTxt);
     assert.equal(typeof parsed.resolveHost, "function");
     assert.equal(typeof parsed.now, "function");
+    assert.equal(parsed.signal, undefined);
+    assert.equal(parsed.timeoutMs, null);
+    assert.deepEqual(parsed.timeouts, {
+      resolveTxtMs: null,
+      resolveHostMs: null,
+      metadataFetchMs: null,
+      jwksFetchMs: null,
+    });
   });
 
   void it("passes resolveHost failures through the issuer stage", async () => {
