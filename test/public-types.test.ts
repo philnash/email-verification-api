@@ -103,6 +103,7 @@ const publicFunctions = [
 ];
 
 async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
+  const controller = new AbortController();
   const externalRequestTimeouts: ExternalRequestTimeouts = {
     resolveTxtMs: 2_000,
     resolveHostMs: null,
@@ -110,6 +111,12 @@ async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
     jwksFetchMs: 4_000,
   };
   ExternalRequestTimeoutsSchema.parse(externalRequestTimeouts);
+  const controlledInput: VerifyEmailTokenInput = {
+    ...input,
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    timeouts: externalRequestTimeouts,
+  };
   const abortedCode: VerificationErrorCode = "REQUEST_ABORTED";
   const timeoutCode: VerificationErrorCode = "REQUEST_TIMEOUT";
   const resolveHost: ResolveHost = () =>
@@ -123,7 +130,7 @@ async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
   void resolvedAddress;
   void abortedCode;
   void timeoutCode;
-  const result = await verifyEmailToken(input);
+  const result = await verifyEmailToken(controlledInput);
   if (result.ok) {
     const email: string = result.value.email;
     const issuer: string = result.value.issuer;
