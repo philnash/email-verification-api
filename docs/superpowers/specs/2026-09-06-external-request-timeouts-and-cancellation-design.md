@@ -73,8 +73,9 @@ The controlled external operations are, in protocol order:
 5. the JWKS fetch, including reading its JSON body.
 
 The implementation checks cancellation and the overall deadline before each
-stage, before each external operation, and after awaited local work. Fetch gets
-a composed signal so cancellation actively aborts the request and body read.
+stage, before each external operation, after awaited local work, and immediately
+before returning success. Fetch gets a composed signal so cancellation actively
+aborts the request and body read.
 
 The Node DNS promise APIs do not accept an `AbortSignal`. DNS operations are
 raced against cancellation and their deadline. Verification returns promptly

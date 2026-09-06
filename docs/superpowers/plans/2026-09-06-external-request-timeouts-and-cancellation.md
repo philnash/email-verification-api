@@ -121,7 +121,14 @@ void describe("request control", () => {
 });
 ```
 
-Extend the documented-default test in `test/verify-token.test.ts` to assert that `signal` is absent, `timeoutMs === null`, and every normalized `timeouts` field is `null`. Extend `test/public-types.test.ts` to import and exercise `ExternalRequestTimeoutsSchema`, `ExternalRequestTimeouts`, and both new error-code literals.
+Extend the documented-default test in `test/verify-token.test.ts` to assert that `signal` is absent, `timeoutMs === null`, and every normalized `timeouts` field is `null`. Extend `test/public-types.test.ts` to import and exercise `ExternalRequestTimeoutsSchema`, `ExternalRequestTimeouts`, and both new error-code literals. Add explicit non-export assertions:
+
+```ts
+// @ts-expect-error createRequestControl is an internal primitive.
+assert.equal(publicApi.createRequestControl, undefined);
+// @ts-expect-error runControlledOperation is an internal primitive.
+assert.equal(publicApi.runControlledOperation, undefined);
+```
 
 - [ ] **Step 2: Run the focused tests and verify they fail**
 
@@ -560,7 +567,12 @@ return {
 };
 ```
 
-Update the successful issuer test to assert that each request receives an `AbortSignal`, while still asserting `method`, `redirect`, and `credentials` individually rather than deep-equaling `RequestInit` without its new signal.
+Update both strict `RequestInit` assertions: the successful request assertion at
+current line 170 and the redirect-failure assertion at current lines 187-189.
+For every captured init, assert `method === "GET"`, `redirect === "error"`,
+`credentials === "omit"`, and `signal instanceof AbortSignal`. Assert the
+captured URL separately. Do not deep-equal either init to `secureFetchInit`
+after signals are added.
 
 - [ ] **Step 2: Write failing table-driven issuer control tests**
 
@@ -661,6 +673,41 @@ Make `verifyIssuerSignature()` parse once, create a control with no overall dead
 
 - [ ] **Step 5: Control hostname resolution and the complete Fetch/body operation**
 
+Use these explicit internal signatures:
+
+```ts
+async function resolveNetworkTarget(
+  control: RequestControl,
+  timeoutMs: number | null,
+  resolveHost: ResolveHost,
+  hostname: string,
+  kind: DocumentKind,
+): Promise<Result<true>>;
+
+async function fetchJsonDocument({
+  control,
+  fetch,
+  url,
+  issuer,
+  kind,
+  resolveHost,
+  resolveHostTimeoutMs,
+  timeoutMs,
+}: {
+  control: RequestControl;
+  fetch: FetchFunction;
+  url: string;
+  issuer: string;
+  kind: DocumentKind;
+  resolveHost: ResolveHost;
+  resolveHostTimeoutMs: number | null;
+  timeoutMs: number | null;
+}): Promise<Result<unknown>>;
+```
+
+The declarations above specify the resulting signatures; implement them as
+ordinary function definitions rather than TypeScript overload declarations.
+
 Change `resolveNetworkTarget` to execute `resolveHost(hostname)` through `runControlledOperation`. On interruption, return:
 
 ```ts
@@ -728,7 +775,8 @@ const controlled = await runControlledOperation(
     }
     try {
       return ok(await Reflect.apply(response.json, responseValue, []));
-    } catch {
+    } catch (cause) {
+      if (signal.aborted) throw cause;
       return documentError(
         kind,
         `${kind} response did not contain valid JSON.`,
@@ -902,7 +950,88 @@ const issuerVerified = await verifyIssuerSignatureWithControl(
 );
 ```
 
-Check `checkInterruption(control)` after synchronous expected-value validation and final schema parsing. Wrap `parseToken()` and `verifyKeyBinding()` with `runControlledOperation(control, null, () => ...)`, returning `REQUEST_ABORTED` or `REQUEST_TIMEOUT` at stages `parse` and `key-binding` when interrupted. Never start the next stage after interruption.
+Replace the direct `parseToken()` await with:
+
+```ts
+const controlledParsed = await runControlledOperation(
+  control,
+  null,
+  () => parseToken(parsedInput.data.token),
+);
+if (!controlledParsed.ok) {
+  if ("interruption" in controlledParsed) {
+    return interruptionResult(
+      "parse",
+      "Token parsing",
+      controlledParsed.interruption,
+    );
+  }
+  return invalidInput(
+    "The token could not be parsed safely.",
+    controlledParsed.cause,
+  );
+}
+const parsed = controlledParsed.value;
+if (!parsed.ok) return parsed;
+```
+
+Immediately after `validateExpectedValues()` returns, check the shared control
+before inspecting its `Result`:
+
+```ts
+const expectedInterruption = checkInterruption(control);
+if (expectedInterruption !== undefined) {
+  return interruptionResult(
+    "expected-values",
+    "Expected-values validation",
+    expectedInterruption,
+  );
+}
+if (!expected.ok) return expected;
+```
+
+Replace the direct `verifyKeyBinding()` await with:
+
+```ts
+const controlledKeyBound = await runControlledOperation(
+  control,
+  null,
+  () => verifyKeyBinding({ token: issuerVerified.value }),
+);
+if (!controlledKeyBound.ok) {
+  if ("interruption" in controlledKeyBound) {
+    return interruptionResult(
+      "key-binding",
+      "Key-binding verification",
+      controlledKeyBound.interruption,
+    );
+  }
+  return invalidInput(
+    "Key binding could not be verified safely.",
+    controlledKeyBound.cause,
+  );
+}
+const keyBound = controlledKeyBound.value;
+if (!keyBound.ok) return keyBound;
+```
+
+After `VerifiedEmailSchema.safeParse()` succeeds, perform one final checkpoint
+before returning `ok(verifiedEmail.data)`:
+
+```ts
+const finalInterruption = checkInterruption(control);
+if (finalInterruption !== undefined) {
+  return interruptionResult(
+    "key-binding",
+    "Verified result validation",
+    finalInterruption,
+  );
+}
+```
+
+This final check is intentional: the approved overall timeout covers local work,
+and synchronous schema parsing cannot be interrupted until its next checkpoint.
+Never start the next stage after an interruption.
 
 - [ ] **Step 5: Run orchestration and public type tests**
 
@@ -946,10 +1075,16 @@ Immediately below the table, document `resolveTxtMs`, `resolveHostMs`, `metadata
 
 - [ ] **Step 2: Add cancellation and recommended timeout examples**
 
-Add this example near dependency injection:
+Extend the existing `app.post("/emails", ...)` example and make its handler
+`async`. Define the controller and response-close hook inside that handler, then
+remove the hook when verification settles:
 
 ```ts
 const controller = new AbortController();
+const abortVerification = () => controller.abort();
+
+// Cancel if the client connection closes before verification completes.
+res.once("close", abortVerification);
 
 const result = await verifyEmailToken({
   token,
@@ -964,7 +1099,7 @@ const result = await verifyEmailToken({
     metadataFetchMs: 4_000,
     jwksFetchMs: 4_000,
   },
-});
+}).finally(() => res.off("close", abortVerification));
 
 if (!result.ok) {
   if (result.error.code === "REQUEST_ABORTED") {
@@ -973,8 +1108,6 @@ if (!result.ok) {
     // The overall or active operation deadline expired.
   }
 }
-
-controller.abort();
 ```
 
 Label these values as a recommendation for interactive verification, not library defaults. Include examples of `timeoutMs: null`, one nested field set to `null`, and `timeouts: null`.
