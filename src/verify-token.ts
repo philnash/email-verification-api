@@ -93,6 +93,10 @@ export async function verifyEmailToken(
       },
       control,
     );
+    const dnsInterruption = checkInterruption(control);
+    if (dnsInterruption !== undefined) {
+      return interruptionResult("dns", "DNS verification", dnsInterruption);
+    }
     if (!delegated.ok) return delegated;
 
     const issuerVerified = await verifyIssuerSignatureWithControl(
@@ -106,6 +110,14 @@ export async function verifyEmailToken(
       },
       control,
     );
+    const issuerInterruption = checkInterruption(control);
+    if (issuerInterruption !== undefined) {
+      return interruptionResult(
+        "issuer",
+        "Issuer verification",
+        issuerInterruption,
+      );
+    }
     if (!issuerVerified.ok) return issuerVerified;
 
     const controlledKeyBound = await runControlledOperation(control, null, () =>

@@ -5,6 +5,7 @@ import { generateKeyPair } from "jose";
 import { parseToken } from "../src/parse-token.js";
 import type { Result, VerificationErrorCode } from "../src/result.js";
 import {
+  IssuerVerifiedTokenSchema,
   KeyBindingVerifiedTokenSchema,
   VerifiedEmailSchema,
   VerifyEmailTokenInputSchema,
@@ -349,6 +350,74 @@ void describe("verifyEmailToken", () => {
     assertFailure(result, "dns", "REQUEST_ABORTED");
     assert.deepEqual(fetchCalls, []);
     assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks the overall deadline after DNS semantic processing", async () => {
+    const fixture = await createTokenFixture();
+    const records = Array.from({ length: 300_000 }, () => [
+      "iss=accounts.example.com",
+    ]);
+    const { input, fetchCalls } = validInput(fixture, {
+      timeoutMs: 10,
+      resolveTxt: () => Promise.resolve(records),
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_TIMEOUT");
+    assert.deepEqual(fetchCalls, []);
+  });
+
+  void it("prefers caller cancellation after DNS semantic processing", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const hostileRecords = new Proxy([["iss=accounts.example.com"]], {
+      get(target, property, receiver) {
+        if (property === "length") {
+          controller.abort("DO_NOT_EXPOSE");
+          throw new Error("records unavailable");
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+    const { input, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+      resolveTxt: () => Promise.resolve(hostileRecords),
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_ABORTED");
+    assert.deepEqual(fetchCalls, []);
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks cancellation after issuer verification before key binding", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const originalSafeParse = IssuerVerifiedTokenSchema.safeParse.bind(
+      IssuerVerifiedTokenSchema,
+    );
+    IssuerVerifiedTokenSchema.safeParse = (value: unknown) => {
+      const parsed = originalSafeParse(value);
+      queueMicrotask(() => {
+        controller.abort("DO_NOT_EXPOSE");
+      });
+      return parsed;
+    };
+
+    try {
+      const result = await verifyEmailToken({
+        ...validInput(fixture).input,
+        signal: controller.signal,
+      });
+
+      assertFailure(result, "issuer", "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      IssuerVerifiedTokenSchema.safeParse = originalSafeParse;
+    }
   });
 
   void it("checks cancellation after token parsing before starting DNS", async () => {
