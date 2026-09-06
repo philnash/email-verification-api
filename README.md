@@ -41,19 +41,40 @@ Full details on [how to implement a verifier site are available in this Chrome D
 
 ### Verifying the token
 
+This example uses a recommended timeout profile for interactive verification. These values are not library defaults; all request timeouts are disabled unless you configure them.
+
 ```javascript
 import { verifyEmailToken } from "email-verification-api";
 
-app.post("/emails", (req, res) => {
+app.post("/emails", async (req, res) => {
   const { email, token } = req.body;
-  const nonce = request.session.nonce;
-  const audience = `${request.protocol}://${request.host}`;
+  const nonce = req.session.nonce;
+  const audience = `${req.protocol}://${req.host}`;
 
   if (!token) {
     // verify email with OTP instead
   }
 
-  const result = await verifyEmailToken({ email, token, audience, nonce });
+  const controller = new AbortController();
+  const abortVerification = () => controller.abort();
+
+  // Cancel if the client connection closes before verification completes.
+  res.once("close", abortVerification);
+
+  const result = await verifyEmailToken({
+    email,
+    token,
+    audience,
+    nonce,
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    timeouts: {
+      resolveTxtMs: 2_000,
+      resolveHostMs: 2_000,
+      metadataFetchMs: 4_000,
+      jwksFetchMs: 4_000,
+    },
+  }).finally(() => res.off("close", abortVerification));
 
   if (result.ok) {
     console.log(`${result.value.email} is verified by ${result.value.issuer}`);
@@ -64,6 +85,13 @@ app.post("/emails", (req, res) => {
       message: result.error.message,
       cause: result.error.cause,
     });
+
+    if (result.error.code === "REQUEST_ABORTED") {
+      // The caller cancelled verification.
+    } else if (result.error.code === "REQUEST_TIMEOUT") {
+      // The overall or active operation deadline expired.
+    }
+
     // Verification failed
     // verify email with OTP instead
   }
@@ -84,16 +112,51 @@ Email comparison is case-insensitive and the nonce comparison is exact and case-
 
 There are optional arguments to `verifyEmailToken` too. These are:
 
-| Property                | Default                        | Meaning                                            |
-| ----------------------- | ------------------------------ | -------------------------------------------------- |
-| `maxTokenAgeSeconds`    | `300`                          | Maximum age of both the EVT and KB-JWT.            |
-| `clockToleranceSeconds` | `60`                           | Clock skew allowed for age and future issue times. |
-| `fetch`                 | global `fetch`                 | Fetch implementation used for metadata and JWKS.   |
-| `resolveTxt`            | `node:dns/promises.resolveTxt` | DNS TXT resolver.                                  |
-| `resolveHost`           | `node:dns/promises.lookup`     | Address resolver used before each issuer request.  |
-| `now`                   | `() => Date.now()`             | Clock returning Unix time in milliseconds.         |
+| Property                | Default                        | Meaning                                              |
+| ----------------------- | ------------------------------ | ---------------------------------------------------- |
+| `maxTokenAgeSeconds`    | `300`                          | Maximum age of both the EVT and KB-JWT.              |
+| `clockToleranceSeconds` | `60`                           | Clock skew allowed for age and future issue times.   |
+| `fetch`                 | global `fetch`                 | Fetch implementation used for metadata and JWKS.     |
+| `resolveTxt`            | `node:dns/promises.resolveTxt` | DNS TXT resolver.                                    |
+| `resolveHost`           | `node:dns/promises.lookup`     | Address resolver used before each issuer request.    |
+| `now`                   | `() => Date.now()`             | Clock returning Unix time in milliseconds.           |
+| `signal`                | none                           | Cancels verification when its controller is aborted. |
+| `timeoutMs`             | `null`                         | Overall verification timeout in milliseconds.        |
+| `timeouts`              | `null`                         | Per-operation timeout values in milliseconds.        |
 
-Exact age and tolerance boundaries are accepted. Both timing options must be positive integers.
+The `timeouts` object supports four independent limits:
+
+| Property          | Default | Meaning                                    |
+| ----------------- | ------- | ------------------------------------------ |
+| `resolveTxtMs`    | `null`  | Timeout for the DNS TXT lookup.            |
+| `resolveHostMs`   | `null`  | Timeout for each hostname safety lookup.   |
+| `metadataFetchMs` | `null`  | Timeout for fetching and reading metadata. |
+| `jwksFetchMs`     | `null`  | Timeout for fetching and reading the JWKS. |
+
+Omitted timeout options and values set to `null` impose no limit. Timeout numbers must be positive finite integers in milliseconds. `timeoutMs` limits the entire verification call; before each external operation, the smaller of its configured timeout and the remaining overall time applies.
+
+You can explicitly opt out at either level:
+
+```javascript
+await verifyEmailToken({
+  token,
+  nonce,
+  email,
+  audience,
+  timeoutMs: null,
+  timeouts: { jwksFetchMs: null },
+});
+
+await verifyEmailToken({
+  token,
+  nonce,
+  email,
+  audience,
+  timeouts: null,
+});
+```
+
+Exact age and tolerance boundaries are accepted. Both age-related timing options must be positive integers.
 
 On success, the result contains authenticated values:
 
@@ -153,8 +216,11 @@ ISSUER_MISMATCH                  METADATA_FETCH_FAILED
 METADATA_INVALID                 JWKS_FETCH_FAILED
 JWKS_INVALID                     ALGORITHM_UNSUPPORTED
 EVT_SIGNATURE_INVALID            KB_SIGNATURE_INVALID
-SD_HASH_MISMATCH
+SD_HASH_MISMATCH                 REQUEST_ABORTED
+REQUEST_TIMEOUT
 ```
+
+`REQUEST_ABORTED` means the caller's `AbortSignal` cancelled verification. `REQUEST_TIMEOUT` means the overall deadline or the active operation's deadline expired.
 
 The package also exports `ok()`, `err()`, `isOk()`, `isErr()`, the error schemas, and their inferred TypeScript types.
 
@@ -204,6 +270,8 @@ The library calls `resolveHost` immediately before each metadata and JWKS reques
 Each address must match its declared family. Each address must also be globally reachable. Verification fails if the answer is empty, malformed, too large, or mixes public and private addresses.
 
 Issuer requests use credentialless `GET`. Redirect handling is set to `error`. Responses marked as redirected are rejected.
+
+The signal for each Fetch request remains active while its JSON response body is read, so cancellation and timeouts actively abort both the request and body reading. Node's DNS promise APIs do not accept an `AbortSignal`; verification still returns promptly when a DNS operation is cancelled or times out, but the underlying DNS work may finish later and its result is ignored.
 
 Rejected promises, thrown values, and invalid dependency responses become failed `Result`s.
 
