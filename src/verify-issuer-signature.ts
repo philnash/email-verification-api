@@ -336,6 +336,7 @@ async function fetchJsonDocument({
         credentials: "omit",
         signal,
       });
+      signal.throwIfAborted();
       let responseResult: z.ZodSafeParseResult<
         z.infer<typeof FetchResponseSchema>
       >;
@@ -374,6 +375,7 @@ async function fetchJsonDocument({
         );
       }
       try {
+        signal.throwIfAborted();
         return ok(await Reflect.apply(response.json, responseValue, []));
       } catch (cause) {
         if (signal.aborted) throw cause;

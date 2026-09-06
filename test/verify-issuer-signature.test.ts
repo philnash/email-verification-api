@@ -462,6 +462,37 @@ void describe("verifyIssuerSignature", () => {
     assert.equal(bodyObservedAbort, true);
   });
 
+  void it("does not read a late response after the Fetch operation times out", async () => {
+    const { token } = await createDnsVerifiedFixture();
+    let resolveFetch!: (response: Response) => void;
+    let jsonCalls = 0;
+    const lateFetch = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      metadataFetchTimeoutMs: 1,
+      fetch: () => lateFetch,
+    });
+
+    assertIssuerError(result, "REQUEST_TIMEOUT");
+    resolveFetch({
+      ok: true,
+      status: 200,
+      url: metadataUrl,
+      redirected: false,
+      json: () => {
+        jsonCalls += 1;
+        return Promise.resolve(metadata());
+      },
+    } as Response);
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    assert.equal(jsonCalls, 0);
+  });
+
   void it("keeps an unrelated AbortError classified as a metadata Fetch failure", async () => {
     const { token } = await createDnsVerifiedFixture();
 
