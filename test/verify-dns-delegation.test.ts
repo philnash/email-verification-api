@@ -116,6 +116,57 @@ void describe("verifyDnsDelegation", () => {
     assert.deepEqual(resolver.calls, ["_email-verification.example.com"]);
   });
 
+  void it("leaves TXT resolution unbounded when timeoutMs is null", async () => {
+    const validated = await createValidatedToken();
+    const result = await verifyDnsDelegation({
+      token: validated,
+      timeoutMs: null,
+      resolveTxt: () => Promise.resolve([["iss=accounts.example.com"]]),
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("times out TXT resolution without starting later work", async () => {
+    const validated = await createValidatedToken();
+    const result = await verifyDnsDelegation({
+      token: validated,
+      timeoutMs: 1,
+      resolveTxt: () => new Promise<string[][]>(() => undefined),
+    });
+
+    assertErrorCode(result, "REQUEST_TIMEOUT");
+  });
+
+  void it("aborts TXT resolution and ignores a late rejection", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    let rejectLookup!: (cause: unknown) => void;
+    let markLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
+    const pending = verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      timeoutMs: null,
+      resolveTxt: () =>
+        new Promise<string[][]>((_resolve, reject) => {
+          rejectLookup = reject;
+          markLookupStarted();
+        }),
+    });
+
+    await lookupStarted;
+    controller.abort("DO_NOT_EXPOSE");
+    const result = await pending;
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+
+    rejectLookup(new Error("late DNS failure"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
   void it("rejects absent or malformed delegation records", async () => {
     const validated = await createValidatedToken();
     const recordSets = [[], [[]], [["v=unrelated"]], [["iss="]]];
@@ -330,6 +381,11 @@ void describe("verifyDnsDelegation", () => {
       null,
       {},
       { token: validated, resolveTxt: "not a function" },
+      { token: validated, signal: {} },
+      { token: validated, timeoutMs: 0 },
+      { token: validated, timeoutMs: -1 },
+      { token: validated, timeoutMs: 1.5 },
+      { token: validated, timeoutMs: Number.POSITIVE_INFINITY },
       getterInput,
       proxyInput,
     ];
