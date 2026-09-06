@@ -178,6 +178,10 @@ export async function verifyDnsDelegationWithControl(
       token,
       issuer: claimedIssuerResult.value,
     });
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult("dns", "DNS verification", finalInterruption);
+    }
     if (!verifiedResult.success) {
       return invalidInput(
         "The DNS-verified token could not be represented safely.",
@@ -186,6 +190,10 @@ export async function verifyDnsDelegationWithControl(
     }
     return ok(verifiedResult.data);
   } catch (cause) {
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult("dns", "DNS verification", finalInterruption);
+    }
     return invalidInput(
       "The DNS-verified token could not be represented safely.",
       cause,
@@ -239,6 +247,14 @@ async function resolveRecords(
 
   try {
     const result = DnsRecordsSchema.safeParse(controlled.value);
+    const recordsInterruption = checkInterruption(control);
+    if (recordsInterruption !== undefined) {
+      return interruptionResult(
+        "dns",
+        `TXT lookup response for ${dnsTarget}`,
+        recordsInterruption,
+      );
+    }
     if (result.success) return ok(result.data);
     return dnsError(
       "DNS_LOOKUP_FAILED",
@@ -246,6 +262,14 @@ async function resolveRecords(
       result.error,
     );
   } catch (cause) {
+    const recordsInterruption = checkInterruption(control);
+    if (recordsInterruption !== undefined) {
+      return interruptionResult(
+        "dns",
+        `TXT lookup response for ${dnsTarget}`,
+        recordsInterruption,
+      );
+    }
     return dnsError(
       "DNS_LOOKUP_FAILED",
       `The TXT resolver returned an invalid response for ${dnsTarget}.`,

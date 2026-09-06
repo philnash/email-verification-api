@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseToken } from "../src/parse-token.js";
 import type { Result, VerificationErrorCode } from "../src/result.js";
-import type { ExpectedValuesValidatedToken } from "../src/schemas.js";
+import {
+  DnsVerifiedTokenSchema,
+  type ExpectedValuesValidatedToken,
+} from "../src/schemas.js";
 import { validateExpectedValues } from "../src/validate-expected-values.js";
 import {
   canonicalIssuer,
@@ -373,6 +376,53 @@ void describe("verifyDnsDelegation", () => {
     });
 
     assertErrorCode(result, "DNS_LOOKUP_FAILED");
+  });
+
+  void it("prefers caller cancellation triggered while validating resolver output", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    const records = new Proxy<string[][]>([["v=unrelated"]], {
+      get(target, property, receiver): unknown {
+        if (property === "length") controller.abort("DO_NOT_EXPOSE");
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      resolveTxt: () => Promise.resolve(records),
+    });
+
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks caller cancellation after final DNS token validation", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    const originalSafeParse = DnsVerifiedTokenSchema.safeParse.bind(
+      DnsVerifiedTokenSchema,
+    );
+    DnsVerifiedTokenSchema.safeParse = (value: unknown) => {
+      const parsed = originalSafeParse(value);
+      controller.abort("DO_NOT_EXPOSE");
+      return parsed;
+    };
+
+    try {
+      const result = await verifyDnsDelegation({
+        token: validated,
+        signal: controller.signal,
+        resolveTxt: () => Promise.resolve([["iss=accounts.example.com"]]),
+      });
+
+      assertErrorCode(result, "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      DnsVerifiedTokenSchema.safeParse = originalSafeParse;
+    }
   });
 
   void it("checks caller cancellation before DNS semantic work", async () => {
