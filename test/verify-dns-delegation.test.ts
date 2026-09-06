@@ -356,6 +356,53 @@ void describe("verifyDnsDelegation", () => {
     }
   });
 
+  void it("contains hostile array resolver output without throwing", async () => {
+    const validated = await createValidatedToken();
+    const hostileRecords = new Proxy<string[][]>([], {
+      get(_target, property) {
+        if (property === "then") {
+          return undefined;
+        }
+        throw new Error("records unavailable");
+      },
+    });
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      resolveTxt: () => Promise.resolve(hostileRecords),
+    });
+
+    assertErrorCode(result, "DNS_LOOKUP_FAILED");
+  });
+
+  void it("checks caller cancellation before DNS semantic work", async () => {
+    const validated = await createValidatedToken({
+      issuer: "http://accounts.example.com",
+    });
+    const controller = new AbortController();
+    controller.abort("DO_NOT_EXPOSE");
+    let resolverCalled = false;
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      resolveTxt: () => {
+        resolverCalled = true;
+        return Promise.resolve([["iss=accounts.example.com"]]);
+      },
+    });
+
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(resolverCalled, false);
+
+    const invalidInputResult = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      timeoutMs: 0,
+    });
+    assertErrorCode(invalidInputResult, "INVALID_INPUT");
+  });
+
   void it("rejects invalid and hostile public input without throwing", async () => {
     const validated = await createValidatedToken();
     const getterInput = Object.defineProperty(

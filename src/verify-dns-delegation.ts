@@ -1,6 +1,7 @@
 import { resolveTxt as defaultResolveTxt } from "node:dns/promises";
 import * as z from "zod";
 import {
+  checkInterruption,
   createRequestControl,
   interruptionResult,
   runControlledOperation,
@@ -92,6 +93,11 @@ export async function verifyDnsDelegationWithControl(
   control: RequestControl,
 ): Promise<Result<DnsVerifiedToken>> {
   const { token, resolveTxt, timeoutMs } = input;
+  const initialInterruption = checkInterruption(control);
+  if (initialInterruption !== undefined) {
+    return interruptionResult("dns", "DNS verification", initialInterruption);
+  }
+
   const claimedIssuerResult = canonicalIssuer(token.token.evt.claims.iss);
   if (!claimedIssuerResult.ok) {
     return dnsError(
@@ -231,15 +237,21 @@ async function resolveRecords(
     );
   }
 
-  const result = DnsRecordsSchema.safeParse(controlled.value);
-  if (!result.success) {
+  try {
+    const result = DnsRecordsSchema.safeParse(controlled.value);
+    if (result.success) return ok(result.data);
     return dnsError(
       "DNS_LOOKUP_FAILED",
       `The TXT resolver returned an invalid response for ${dnsTarget}.`,
       result.error,
     );
+  } catch (cause) {
+    return dnsError(
+      "DNS_LOOKUP_FAILED",
+      `The TXT resolver returned an invalid response for ${dnsTarget}.`,
+      cause,
+    );
   }
-  return ok(result.data);
 }
 
 function issuerLooksLikeUrl(value: string): boolean {
