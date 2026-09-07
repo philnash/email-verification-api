@@ -9,6 +9,24 @@ This project provides a function for web developers to verify the Email Verifica
 > [!Warning]
 > This library is targeting a draft specification that is under development. It may be out of date at times, but I will be updating it to match what is specified and supported by browsers and mailbox providers.
 
+* [How to use](#how-to-use)
+  * [Installation](#installation)
+  * [Get an Email Verification Token](#get-an-email-verification-token)
+  * [Verifying the token](#verifying-the-token)
+    * [Basic verification](#basic-verification)
+    * [Timeouts and cancellation](#timeouts-and-cancellation)
+    * [Express example](#express-example)
+* [API reference](#api-reference)
+* [Verification order](#verification-order)
+* [Errors and Results](#errors-and-results)
+* [Dependency injection](#dependency-injection)
+* [Network security and runtime behavior](#network-security-and-runtime-behavior)
+  * [HTTP requests](#http-requests)
+  * [Cancellation and timeouts](#cancellation-and-timeouts)
+* [Developing](#developing)
+* [License](#license)
+
+
 ## How to use
 
 ### Installation
@@ -37,11 +55,15 @@ Full details on [how to implement a verifier site are available in this Chrome D
   You must use the `autocomplete` attributes as shown above.
 - When the user enters their email address into the input field, the browser triggers the process to generate a token
 - The token is stored in the hidden input and submitted to the server when the user completes the form
-- On the server, you use the email, the nonce, and the site URL to verify the token. That process is quite involved, but it's where this library comes into play
+- On the server, you use the email, the nonce, and the site URL to verify the token using this library
 
 ### Verifying the token
 
 #### Basic verification
+
+Pass the email the user submitted, the token, the nonce from the session, and your site URL as the audience to verify the email address.
+
+A successful result returns an object with an `ok` property set to `true` and a `value` property with the details of the verifcation. If the result is unsuccessful for any reason, then `ok` will be `false` and there will be an `error` property with the details of the error.
 
 ```javascript
 import { verifyEmailToken } from "email-verification-api";
@@ -61,6 +83,8 @@ if (result.ok) {
 ```
 
 #### Timeouts and cancellation
+
+To stop verification from going on too long if external services aren't available, you can pass a timeout for the whole process and timeouts for each individual remote call. You can also pass an abort signal to control cancelling the process yourself.
 
 All request timeouts are disabled unless you configure them. This example uses a recommended timeout profile for interactive verification and an abort signal that can cancel the entire operation.
 
@@ -142,6 +166,8 @@ app.post("/emails", async (req, res) => {
   }
 });
 ```
+
+## API reference
 
 `verifyEmailToken()` needs four values:
 
@@ -311,11 +337,19 @@ type ResolveHost = (
 
 The library calls `resolveHost` immediately before each metadata and JWKS request. It calls `resolveHost` twice when both URLs use the same hostname. It does so to verify that hosts resolve to valid, globally reachable IP addresses.
 
+## Network security and runtime behavior
+
 Each address must match its declared family. Each address must also be globally reachable. Verification fails if the answer is empty, malformed, too large, or mixes public and private addresses.
+
+### HTTP requests
 
 Issuer requests use credentialless `GET`. Redirect handling is set to `error`. Responses marked as redirected are rejected.
 
-The signal for each Fetch request remains active while its JSON response body is read, so cancellation and timeouts actively abort both the request and body reading. Node's DNS promise APIs do not accept an `AbortSignal`; verification still returns promptly when a DNS operation is cancelled or times out, but the underlying DNS work may finish later and its result is ignored.
+### Cancellation and timeouts
+
+The signal for each Fetch request remains active while its JSON response body is read, so cancellation and timeouts actively abort both the request and body reading.
+
+Node's DNS promise APIs do not accept an `AbortSignal`; verification still returns promptly when a DNS operation is cancelled or times out, but the underlying DNS work may finish later and its result is ignored.
 
 Rejected promises, thrown values, and invalid dependency responses become failed `Result`s.
 
