@@ -5,6 +5,9 @@ import { generateKeyPair } from "jose";
 import { parseToken } from "../src/parse-token.js";
 import type { Result, VerificationErrorCode } from "../src/result.js";
 import {
+  IssuerVerifiedTokenSchema,
+  KeyBindingVerifiedTokenSchema,
+  VerifiedEmailSchema,
   VerifyEmailTokenInputSchema,
   type VerifiedEmail,
 } from "../src/schemas.js";
@@ -186,6 +189,322 @@ void describe("verifyEmailToken", () => {
     assert.equal(parsed.resolveTxt, defaultResolveTxt);
     assert.equal(typeof parsed.resolveHost, "function");
     assert.equal(typeof parsed.now, "function");
+    assert.equal(parsed.signal, undefined);
+    assert.equal(parsed.timeoutMs, null);
+    assert.deepEqual(parsed.timeouts, {
+      resolveTxtMs: null,
+      resolveHostMs: null,
+      metadataFetchMs: null,
+      jwksFetchMs: null,
+    });
+  });
+
+  void it("returns an aborted input result before dependencies run", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    controller.abort("DO_NOT_EXPOSE");
+    const { input, dnsCalls, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "input", "REQUEST_ABORTED");
+    assert.deepEqual(dnsCalls, []);
+    assert.deepEqual(fetchCalls, []);
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("applies the overall deadline when operation limits are null", async () => {
+    const fixture = await createTokenFixture();
+    const { input, fetchCalls } = validInput(fixture, {
+      timeoutMs: 1,
+      timeouts: null,
+      resolveTxt: () => new Promise<string[][]>(() => undefined),
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_TIMEOUT");
+    assert.deepEqual(fetchCalls, []);
+  });
+
+  void it("applies every nested timeout to its named external operation", async () => {
+    const fixture = await createTokenFixture();
+    const cases: readonly [
+      string,
+      Record<string, unknown>,
+      "dns" | "issuer",
+      readonly string[],
+    ][] = [
+      [
+        "resolveTxtMs",
+        {
+          resolveTxt: () => new Promise<string[][]>(() => undefined),
+          timeouts: { resolveTxtMs: 1 },
+        },
+        "dns",
+        [],
+      ],
+      [
+        "resolveHostMs",
+        {
+          resolveHost: () =>
+            new Promise<readonly { address: string; family: 4 | 6 }[]>(
+              () => undefined,
+            ),
+          timeouts: { resolveHostMs: 1 },
+        },
+        "issuer",
+        [],
+      ],
+      [
+        "metadataFetchMs",
+        {
+          fetch: () => new Promise<Response>(() => undefined),
+          timeouts: { metadataFetchMs: 1 },
+        },
+        "issuer",
+        [metadataUrl],
+      ],
+      [
+        "jwksFetchMs",
+        {
+          fetch: (input: string | URL | Request) => {
+            const url =
+              typeof input === "string"
+                ? input
+                : input instanceof URL
+                  ? input.href
+                  : input.url;
+            return url === metadataUrl
+              ? Promise.resolve(jsonResponse(metadata()))
+              : new Promise<Response>(() => undefined);
+          },
+          timeouts: { jwksFetchMs: 1 },
+        },
+        "issuer",
+        [metadataUrl, jwksUrl],
+      ],
+    ];
+
+    for (const [name, overrides, stage, expectedFetchCalls] of cases) {
+      const fetchCalls: string[] = [];
+      const overrideFetch = overrides["fetch"];
+      const typedFetch = overrideFetch as (
+        request: string | URL | Request,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      const { input } = validInput(fixture, {
+        ...overrides,
+        ...(typeof overrideFetch === "function"
+          ? {
+              fetch: (request: string | URL | Request, init?: RequestInit) => {
+                const url =
+                  typeof request === "string"
+                    ? request
+                    : request instanceof URL
+                      ? request.href
+                      : request.url;
+                fetchCalls.push(url);
+                return typedFetch(request, init);
+              },
+            }
+          : {}),
+      });
+
+      const result = await verifyEmailToken(input);
+
+      assertFailure(result, stage, "REQUEST_TIMEOUT");
+      assert.deepEqual(fetchCalls, expectedFetchCalls, name);
+    }
+  });
+
+  void it("leaves omitted timeout defaults unbounded", async () => {
+    const fixture = await createTokenFixture();
+    const { input } = validInput(fixture, {
+      resolveTxt: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        return [["iss=accounts.example.com"]];
+      },
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("cancels during DNS and does not expose the abort reason or continue", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const { input, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+      resolveTxt: () => {
+        controller.abort("DO_NOT_EXPOSE");
+        return new Promise<string[][]>(() => undefined);
+      },
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_ABORTED");
+    assert.deepEqual(fetchCalls, []);
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks the overall deadline after DNS semantic processing", async () => {
+    const fixture = await createTokenFixture();
+    const records = Array.from({ length: 300_000 }, () => [
+      "iss=accounts.example.com",
+    ]);
+    const { input, fetchCalls } = validInput(fixture, {
+      timeoutMs: 10,
+      resolveTxt: () => Promise.resolve(records),
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_TIMEOUT");
+    assert.deepEqual(fetchCalls, []);
+  });
+
+  void it("prefers caller cancellation after DNS semantic processing", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const hostileRecords = new Proxy([["iss=accounts.example.com"]], {
+      get(target, property, receiver) {
+        if (property === "length") {
+          controller.abort("DO_NOT_EXPOSE");
+          throw new Error("records unavailable");
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+    const { input, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+      resolveTxt: () => Promise.resolve(hostileRecords),
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "dns", "REQUEST_ABORTED");
+    assert.deepEqual(fetchCalls, []);
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks cancellation after issuer verification before key binding", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const originalSafeParse = IssuerVerifiedTokenSchema.safeParse.bind(
+      IssuerVerifiedTokenSchema,
+    );
+    IssuerVerifiedTokenSchema.safeParse = (value: unknown) => {
+      const parsed = originalSafeParse(value);
+      queueMicrotask(() => {
+        controller.abort("DO_NOT_EXPOSE");
+      });
+      return parsed;
+    };
+
+    try {
+      const result = await verifyEmailToken({
+        ...validInput(fixture).input,
+        signal: controller.signal,
+      });
+
+      assertFailure(result, "issuer", "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      IssuerVerifiedTokenSchema.safeParse = originalSafeParse;
+    }
+  });
+
+  void it("checks cancellation after token parsing before starting DNS", async () => {
+    const fixture = await createTokenFixture({ discloseEmail: true });
+    const controller = new AbortController();
+    const { input, dnsCalls, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+    });
+    queueMicrotask(() => {
+      controller.abort("DO_NOT_EXPOSE");
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "parse", "REQUEST_ABORTED");
+    assert.deepEqual(dnsCalls, []);
+    assert.deepEqual(fetchCalls, []);
+  });
+
+  void it("checks cancellation after expected-values validation", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const { input, dnsCalls, fetchCalls } = validInput(fixture, {
+      signal: controller.signal,
+      now: () => {
+        controller.abort("DO_NOT_EXPOSE");
+        return nowEpochSeconds * 1_000;
+      },
+    });
+
+    const result = await verifyEmailToken(input);
+
+    assertFailure(result, "expected-values", "REQUEST_ABORTED");
+    assert.deepEqual(dnsCalls, []);
+    assert.deepEqual(fetchCalls, []);
+  });
+
+  void it("checks cancellation after asynchronous key-binding work", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const originalSafeParse = KeyBindingVerifiedTokenSchema.safeParse.bind(
+      KeyBindingVerifiedTokenSchema,
+    );
+    KeyBindingVerifiedTokenSchema.safeParse = (value: unknown) => {
+      const parsed = originalSafeParse(value);
+      controller.abort("DO_NOT_EXPOSE");
+      return parsed;
+    };
+
+    try {
+      const result = await verifyEmailToken({
+        ...validInput(fixture).input,
+        signal: controller.signal,
+      });
+
+      assertFailure(result, "key-binding", "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      KeyBindingVerifiedTokenSchema.safeParse = originalSafeParse;
+    }
+  });
+
+  void it("performs a final interruption checkpoint before success", async () => {
+    const fixture = await createTokenFixture();
+    const controller = new AbortController();
+    const originalSafeParse =
+      VerifiedEmailSchema.safeParse.bind(VerifiedEmailSchema);
+    let parseCalls = 0;
+    VerifiedEmailSchema.safeParse = (value: unknown) => {
+      parseCalls += 1;
+      const parsed = originalSafeParse(value);
+      if (parseCalls === 2) controller.abort("DO_NOT_EXPOSE");
+      return parsed;
+    };
+
+    try {
+      const result = await verifyEmailToken({
+        ...validInput(fixture).input,
+        signal: controller.signal,
+      });
+
+      assertFailure(result, "key-binding", "REQUEST_ABORTED");
+      assert.equal(parseCalls, 2);
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      VerifiedEmailSchema.safeParse = originalSafeParse;
+    }
   });
 
   void it("passes resolveHost failures through the issuer stage", async () => {

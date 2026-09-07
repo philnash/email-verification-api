@@ -6,6 +6,7 @@ import {
   EvtClaimsSchema,
   EvtHeaderSchema,
   EvtRawClaimsSchema,
+  ExternalRequestTimeoutsSchema,
   ExpectedValuesInputSchema,
   ExpectedValuesValidatedTokenSchema,
   IssuerMetadataSchema,
@@ -40,6 +41,7 @@ import type {
   EvtClaims,
   EvtHeader,
   EvtRawClaims,
+  ExternalRequestTimeouts,
   ExpectedValuesValidatedToken,
   IssuerMetadata,
   IssuerVerifiedToken,
@@ -66,6 +68,7 @@ const publicSchemas = [
   EvtClaimsSchema,
   EvtHeaderSchema,
   EvtRawClaimsSchema,
+  ExternalRequestTimeoutsSchema,
   ExpectedValuesInputSchema,
   ExpectedValuesValidatedTokenSchema,
   IssuerMetadataSchema,
@@ -100,6 +103,22 @@ const publicFunctions = [
 ];
 
 async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
+  const controller = new AbortController();
+  const externalRequestTimeouts: ExternalRequestTimeouts = {
+    resolveTxtMs: 2_000,
+    resolveHostMs: null,
+    metadataFetchMs: 4_000,
+    jwksFetchMs: 4_000,
+  };
+  ExternalRequestTimeoutsSchema.parse(externalRequestTimeouts);
+  const controlledInput: VerifyEmailTokenInput = {
+    ...input,
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    timeouts: externalRequestTimeouts,
+  };
+  const abortedCode: VerificationErrorCode = "REQUEST_ABORTED";
+  const timeoutCode: VerificationErrorCode = "REQUEST_TIMEOUT";
   const resolveHost: ResolveHost = () =>
     Promise.resolve([{ address: "8.8.8.8", family: 4 }]);
   const inputWithResolver: VerifyEmailTokenInput = { ...input, resolveHost };
@@ -109,7 +128,9 @@ async function compilePublicApi(input: VerifyEmailTokenInput): Promise<void> {
   };
   void inputWithResolver;
   void resolvedAddress;
-  const result = await verifyEmailToken(input);
+  void abortedCode;
+  void timeoutCode;
+  const result = await verifyEmailToken(controlledInput);
   if (result.ok) {
     const email: string = result.value.email;
     const issuer: string = result.value.issuer;
@@ -139,6 +160,7 @@ type PublicTypes = readonly [
   EvtClaims,
   EvtHeader,
   EvtRawClaims,
+  ExternalRequestTimeouts,
   ExpectedValuesValidatedToken,
   IssuerMetadata,
   IssuerVerifiedToken,
@@ -180,6 +202,10 @@ void describe("public API", () => {
     assert.equal(publicApi.containsAsciiWhitespaceOrControl, undefined);
     // @ts-expect-error Default DNS wrappers are internal implementation details.
     assert.equal(publicApi.defaultResolveHost, undefined);
+    // @ts-expect-error createRequestControl is an internal primitive.
+    assert.equal(publicApi.createRequestControl, undefined);
+    // @ts-expect-error runControlledOperation is an internal primitive.
+    assert.equal(publicApi.runControlledOperation, undefined);
     void compilePublicApi;
     void rejectIncompleteInputAtCompileTime;
     void acceptPublicTypes;

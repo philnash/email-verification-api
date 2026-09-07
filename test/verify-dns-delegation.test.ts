@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseToken } from "../src/parse-token.js";
 import type { Result, VerificationErrorCode } from "../src/result.js";
-import type { ExpectedValuesValidatedToken } from "../src/schemas.js";
+import {
+  DnsVerifiedTokenSchema,
+  type ExpectedValuesValidatedToken,
+} from "../src/schemas.js";
 import { validateExpectedValues } from "../src/validate-expected-values.js";
 import {
   canonicalIssuer,
@@ -114,6 +117,57 @@ void describe("verifyDnsDelegation", () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(resolver.calls, ["_email-verification.example.com"]);
+  });
+
+  void it("leaves TXT resolution unbounded when timeoutMs is null", async () => {
+    const validated = await createValidatedToken();
+    const result = await verifyDnsDelegation({
+      token: validated,
+      timeoutMs: null,
+      resolveTxt: () => Promise.resolve([["iss=accounts.example.com"]]),
+    });
+
+    assert.equal(result.ok, true);
+  });
+
+  void it("times out TXT resolution without starting later work", async () => {
+    const validated = await createValidatedToken();
+    const result = await verifyDnsDelegation({
+      token: validated,
+      timeoutMs: 1,
+      resolveTxt: () => new Promise<string[][]>(() => undefined),
+    });
+
+    assertErrorCode(result, "REQUEST_TIMEOUT");
+  });
+
+  void it("aborts TXT resolution and ignores a late rejection", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    let rejectLookup!: (cause: unknown) => void;
+    let markLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
+    const pending = verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      timeoutMs: null,
+      resolveTxt: () =>
+        new Promise<string[][]>((_resolve, reject) => {
+          rejectLookup = reject;
+          markLookupStarted();
+        }),
+    });
+
+    await lookupStarted;
+    controller.abort("DO_NOT_EXPOSE");
+    const result = await pending;
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+
+    rejectLookup(new Error("late DNS failure"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
   });
 
   void it("rejects absent or malformed delegation records", async () => {
@@ -305,6 +359,100 @@ void describe("verifyDnsDelegation", () => {
     }
   });
 
+  void it("contains hostile array resolver output without throwing", async () => {
+    const validated = await createValidatedToken();
+    const hostileRecords = new Proxy<string[][]>([], {
+      get(_target, property) {
+        if (property === "then") {
+          return undefined;
+        }
+        throw new Error("records unavailable");
+      },
+    });
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      resolveTxt: () => Promise.resolve(hostileRecords),
+    });
+
+    assertErrorCode(result, "DNS_LOOKUP_FAILED");
+  });
+
+  void it("prefers caller cancellation triggered while validating resolver output", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    const records = new Proxy<string[][]>([["v=unrelated"]], {
+      get(target, property, receiver): unknown {
+        if (property === "length") controller.abort("DO_NOT_EXPOSE");
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      resolveTxt: () => Promise.resolve(records),
+    });
+
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+  });
+
+  void it("checks caller cancellation after final DNS token validation", async () => {
+    const validated = await createValidatedToken();
+    const controller = new AbortController();
+    const originalSafeParse = DnsVerifiedTokenSchema.safeParse.bind(
+      DnsVerifiedTokenSchema,
+    );
+    DnsVerifiedTokenSchema.safeParse = (value: unknown) => {
+      const parsed = originalSafeParse(value);
+      controller.abort("DO_NOT_EXPOSE");
+      return parsed;
+    };
+
+    try {
+      const result = await verifyDnsDelegation({
+        token: validated,
+        signal: controller.signal,
+        resolveTxt: () => Promise.resolve([["iss=accounts.example.com"]]),
+      });
+
+      assertErrorCode(result, "REQUEST_ABORTED");
+      assert.equal(JSON.stringify(result).includes("DO_NOT_EXPOSE"), false);
+    } finally {
+      DnsVerifiedTokenSchema.safeParse = originalSafeParse;
+    }
+  });
+
+  void it("checks caller cancellation before DNS semantic work", async () => {
+    const validated = await createValidatedToken({
+      issuer: "http://accounts.example.com",
+    });
+    const controller = new AbortController();
+    controller.abort("DO_NOT_EXPOSE");
+    let resolverCalled = false;
+
+    const result = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      resolveTxt: () => {
+        resolverCalled = true;
+        return Promise.resolve([["iss=accounts.example.com"]]);
+      },
+    });
+
+    assertErrorCode(result, "REQUEST_ABORTED");
+    assert.equal(resolverCalled, false);
+
+    const invalidInputResult = await verifyDnsDelegation({
+      token: validated,
+      signal: controller.signal,
+      timeoutMs: 0,
+    });
+    assertErrorCode(invalidInputResult, "INVALID_INPUT");
+  });
+
   void it("rejects invalid and hostile public input without throwing", async () => {
     const validated = await createValidatedToken();
     const getterInput = Object.defineProperty(
@@ -330,6 +478,11 @@ void describe("verifyDnsDelegation", () => {
       null,
       {},
       { token: validated, resolveTxt: "not a function" },
+      { token: validated, signal: {} },
+      { token: validated, timeoutMs: 0 },
+      { token: validated, timeoutMs: -1 },
+      { token: validated, timeoutMs: 1.5 },
+      { token: validated, timeoutMs: Number.POSITIVE_INFINITY },
       getterInput,
       proxyInput,
     ];

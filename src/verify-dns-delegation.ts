@@ -1,10 +1,19 @@
 import { resolveTxt as defaultResolveTxt } from "node:dns/promises";
 import * as z from "zod";
+import {
+  checkInterruption,
+  createRequestControl,
+  interruptionResult,
+  runControlledOperation,
+  type RequestControl,
+} from "./request-control.js";
 import { err, errorCause, ok, type Result } from "./result.js";
 import { containsAsciiWhitespaceOrControl } from "./security-text.js";
 import {
+  AbortSignalSchema,
   DnsVerifiedTokenSchema,
   ExpectedValuesValidatedTokenSchema,
+  TimeoutMillisecondsSchema,
   type DnsVerifiedToken,
 } from "./schemas.js";
 
@@ -18,6 +27,10 @@ const VerifyDnsDelegationInputSchema = z.object({
   token: ExpectedValuesValidatedTokenSchema,
   resolveTxt: ResolveTxtSchema.optional().transform(
     (value) => value ?? defaultResolveTxt,
+  ),
+  signal: AbortSignalSchema.optional(),
+  timeoutMs: TimeoutMillisecondsSchema.optional().transform(
+    (value) => value ?? null,
   ),
 });
 
@@ -65,7 +78,26 @@ export async function verifyDnsDelegation(
   const inputResult = parseInput(input);
   if (!inputResult.ok) return inputResult;
 
-  const { token, resolveTxt } = inputResult.value;
+  const { signal } = inputResult.value;
+  return verifyDnsDelegationWithControl(
+    inputResult.value,
+    createRequestControl({
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: null,
+    }),
+  );
+}
+
+export async function verifyDnsDelegationWithControl(
+  input: z.infer<typeof VerifyDnsDelegationInputSchema>,
+  control: RequestControl,
+): Promise<Result<DnsVerifiedToken>> {
+  const { token, resolveTxt, timeoutMs } = input;
+  const initialInterruption = checkInterruption(control);
+  if (initialInterruption !== undefined) {
+    return interruptionResult("dns", "DNS verification", initialInterruption);
+  }
+
   const claimedIssuerResult = canonicalIssuer(token.token.evt.claims.iss);
   if (!claimedIssuerResult.ok) {
     return dnsError(
@@ -77,7 +109,12 @@ export async function verifyDnsDelegation(
 
   const emailDomain = token.email.slice(token.email.lastIndexOf("@") + 1);
   const dnsTarget = `_email-verification.${emailDomain}`;
-  const recordsResult = await resolveRecords(resolveTxt, dnsTarget);
+  const recordsResult = await resolveRecords(
+    resolveTxt,
+    dnsTarget,
+    control,
+    timeoutMs,
+  );
   if (!recordsResult.ok) return recordsResult;
 
   if (recordsResult.value.length > 1) {
@@ -141,6 +178,10 @@ export async function verifyDnsDelegation(
       token,
       issuer: claimedIssuerResult.value,
     });
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult("dns", "DNS verification", finalInterruption);
+    }
     if (!verifiedResult.success) {
       return invalidInput(
         "The DNS-verified token could not be represented safely.",
@@ -149,6 +190,10 @@ export async function verifyDnsDelegation(
     }
     return ok(verifiedResult.data);
   } catch (cause) {
+    const finalInterruption = checkInterruption(control);
+    if (finalInterruption !== undefined) {
+      return interruptionResult("dns", "DNS verification", finalInterruption);
+    }
     return invalidInput(
       "The DNS-verified token could not be represented safely.",
       cause,
@@ -163,7 +208,7 @@ function parseInput(
     const result = VerifyDnsDelegationInputSchema.safeParse(input);
     if (!result.success) {
       return invalidInput(
-        "DNS verification requires an expected-values-validated token and an optional TXT resolver.",
+        "DNS verification requires an expected-values-validated token and optional TXT resolver, signal, and timeout.",
         result.error,
       );
     }
@@ -179,22 +224,55 @@ function parseInput(
 async function resolveRecords(
   resolveTxt: ResolveTxt,
   dnsTarget: string,
+  control: RequestControl,
+  timeoutMs: number | null,
 ): Promise<Result<string[][]>> {
-  try {
-    const records = await resolveTxt(dnsTarget);
-    const result = DnsRecordsSchema.safeParse(records);
-    if (!result.success) {
-      return dnsError(
-        "DNS_LOOKUP_FAILED",
-        `The TXT resolver returned an invalid response for ${dnsTarget}.`,
-        result.error,
+  const controlled = await runControlledOperation(control, timeoutMs, () =>
+    resolveTxt(dnsTarget),
+  );
+  if (!controlled.ok) {
+    if ("interruption" in controlled) {
+      return interruptionResult(
+        "dns",
+        `TXT lookup for ${dnsTarget}`,
+        controlled.interruption,
       );
     }
-    return ok(result.data);
-  } catch (cause) {
     return dnsError(
       "DNS_LOOKUP_FAILED",
       `The TXT lookup failed for ${dnsTarget}.`,
+      controlled.cause,
+    );
+  }
+
+  try {
+    const result = DnsRecordsSchema.safeParse(controlled.value);
+    const recordsInterruption = checkInterruption(control);
+    if (recordsInterruption !== undefined) {
+      return interruptionResult(
+        "dns",
+        `TXT lookup response for ${dnsTarget}`,
+        recordsInterruption,
+      );
+    }
+    if (result.success) return ok(result.data);
+    return dnsError(
+      "DNS_LOOKUP_FAILED",
+      `The TXT resolver returned an invalid response for ${dnsTarget}.`,
+      result.error,
+    );
+  } catch (cause) {
+    const recordsInterruption = checkInterruption(control);
+    if (recordsInterruption !== undefined) {
+      return interruptionResult(
+        "dns",
+        `TXT lookup response for ${dnsTarget}`,
+        recordsInterruption,
+      );
+    }
+    return dnsError(
+      "DNS_LOOKUP_FAILED",
+      `The TXT resolver returned an invalid response for ${dnsTarget}.`,
       cause,
     );
   }
