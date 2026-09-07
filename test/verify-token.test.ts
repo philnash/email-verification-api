@@ -218,7 +218,7 @@ void describe("verifyEmailToken", () => {
   void it("applies the overall deadline when operation limits are null", async () => {
     const fixture = await createTokenFixture();
     const { input, fetchCalls } = validInput(fixture, {
-      timeoutMs: 1,
+      timeoutMs: 100,
       timeouts: null,
       resolveTxt: () => new Promise<string[][]>(() => undefined),
     });
