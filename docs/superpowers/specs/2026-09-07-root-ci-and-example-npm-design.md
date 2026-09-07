@@ -19,7 +19,10 @@ Create `.github/workflows/ci.yml`, triggered by pull requests and pushes to `mai
 1. **Library checks** checks out the repository, configures Node with npm caching based on the root `package-lock.json`, runs root `npm ci`, and runs `npm run check`. The existing `check` script covers formatting, type-checking, lint, build, and all library tests.
 2. **Example lint** checks out the repository, configures Node with npm caching based on `example/package-lock.json`, runs `npm ci` from `example/`, and runs `npm run lint` from `example/`.
 
-Use the current official action majors verified during implementation: `actions/checkout@v6` and `actions/setup-node@v7`.
+Pin each action to its verified full release commit SHA, retaining the release version in a comment for readability and automated dependency updates:
+
+- `actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2`
+- `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0`
 
 The workflow does not build, test, or deploy the example app.
 
