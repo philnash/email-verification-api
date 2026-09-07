@@ -94,6 +94,55 @@ if (!result.ok) {
 }
 ```
 
+#### Express example
+
+```javascript
+import { verifyEmailToken } from "email-verification-api";
+
+app.post("/emails", async (req, res) => {
+  const { email, token } = req.body;
+  const nonce = req.session.nonce;
+  const audience = `${req.protocol}://${req.host}`;
+
+  if (!token) {
+    // Return a response from your OTP or magic-link fallback flow here.
+    return;
+  }
+
+  const controller = new AbortController();
+  const abortVerification = () => controller.abort();
+
+  // Cancel verification if the client connection closes.
+  res.once("close", abortVerification);
+
+  const result = await verifyEmailToken({
+    email,
+    token,
+    audience,
+    nonce,
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    timeouts: {
+      resolveTxtMs: 2_000,
+      resolveHostMs: 2_000,
+      metadataFetchMs: 4_000,
+      jwksFetchMs: 4_000,
+    },
+  }).finally(() => res.off("close", abortVerification));
+
+  if (result.ok) {
+    console.log(`${result.value.email} is verified by ${result.value.issuer}`);
+  } else if (result.error.code === "REQUEST_ABORTED") {
+    // The client disconnected or the caller otherwise cancelled verification.
+  } else if (result.error.code === "REQUEST_TIMEOUT") {
+    // The overall or active operation deadline expired.
+  } else {
+    console.error(result.error);
+    // Fall back to another email verification method.
+  }
+});
+```
+
 `verifyEmailToken()` needs four values:
 
 | Property   | Meaning                                                       |
