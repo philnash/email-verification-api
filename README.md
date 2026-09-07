@@ -18,30 +18,18 @@ There is a demo app in the [./example](./example/) directory and you can interac
   - [Example app](#example-app)
   - [Get an Email Verification Token](#get-an-email-verification-token)
   - [Verifying the token](#verifying-the-token)
+    - [Basic verification](#basic-verification)
+    - [Timeouts and cancellation](#timeouts-and-cancellation)
+    - [Express example](#express-example)
+- [API reference](#api-reference)
 - [Verification order](#verification-order)
 - [Errors and Results](#errors-and-results)
 - [Dependency injection](#dependency-injection)
+- [Network security and runtime behavior](#network-security-and-runtime-behavior)
+  - [HTTP requests](#http-requests)
+  - [Cancellation and timeouts](#cancellation-and-timeouts)
 - [Developing](#developing)
 - [License](#license)
-
-
-* [How to use](#how-to-use)
-  * [Installation](#installation)
-  * [Get an Email Verification Token](#get-an-email-verification-token)
-  * [Verifying the token](#verifying-the-token)
-    * [Basic verification](#basic-verification)
-    * [Timeouts and cancellation](#timeouts-and-cancellation)
-    * [Express example](#express-example)
-* [API reference](#api-reference)
-* [Verification order](#verification-order)
-* [Errors and Results](#errors-and-results)
-* [Dependency injection](#dependency-injection)
-* [Network security and runtime behavior](#network-security-and-runtime-behavior)
-  * [HTTP requests](#http-requests)
-  * [Cancellation and timeouts](#cancellation-and-timeouts)
-* [Developing](#developing)
-* [License](#license)
-
 
 ## How to use
 
