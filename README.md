@@ -41,62 +41,57 @@ Full details on [how to implement a verifier site are available in this Chrome D
 
 ### Verifying the token
 
-This example uses a recommended timeout profile for interactive verification. These values are not library defaults; all request timeouts are disabled unless you configure them.
+#### Basic verification
 
 ```javascript
 import { verifyEmailToken } from "email-verification-api";
 
-app.post("/emails", async (req, res) => {
-  const { email, token } = req.body;
-  const nonce = req.session.nonce;
-  const audience = `${req.protocol}://${req.host}`;
-
-  if (!token) {
-    // verify email with OTP instead
-  }
-
-  const controller = new AbortController();
-  const abortVerification = () => controller.abort();
-
-  // Cancel if the client connection closes before verification completes.
-  res.once("close", abortVerification);
-
-  const result = await verifyEmailToken({
-    email,
-    token,
-    audience,
-    nonce,
-    signal: controller.signal,
-    timeoutMs: 10_000,
-    timeouts: {
-      resolveTxtMs: 2_000,
-      resolveHostMs: 2_000,
-      metadataFetchMs: 4_000,
-      jwksFetchMs: 4_000,
-    },
-  }).finally(() => res.off("close", abortVerification));
-
-  if (result.ok) {
-    console.log(`${result.value.email} is verified by ${result.value.issuer}`);
-  } else {
-    console.error({
-      stage: result.error.stage,
-      code: result.error.code,
-      message: result.error.message,
-      cause: result.error.cause,
-    });
-
-    if (result.error.code === "REQUEST_ABORTED") {
-      // The caller cancelled verification.
-    } else if (result.error.code === "REQUEST_TIMEOUT") {
-      // The overall or active operation deadline expired.
-    }
-
-    // Verification failed
-    // verify email with OTP instead
-  }
-  res.redirect("/");
+const result = await verifyEmailToken({
+  token: tokenFromBrowser,
+  nonce: nonceForSession,
+  email: "user@example.com",
+  audience: "https://rp.example.com",
 });
+
+if (result.ok) {
+  console.log(`${result.value.email} is verified by ${result.value.issuer}`);
+} else {
+  console.error(result.error);
+}
+```
+
+#### Timeouts and cancellation
+
+All request timeouts are disabled unless you configure them. This example uses a recommended timeout profile for interactive verification and an abort signal that can cancel the entire operation.
+
+```javascript
+import { verifyEmailToken } from "email-verification-api";
+
+const controller = new AbortController();
+
+// Call controller.abort() if the client disconnects or verification is no longer needed.
+const result = await verifyEmailToken({
+  token: tokenFromBrowser,
+  nonce: nonceForSession,
+  email: "user@example.com",
+  audience: "https://rp.example.com",
+  signal: controller.signal,
+  timeoutMs: 10_000,
+  timeouts: {
+    resolveTxtMs: 2_000,
+    resolveHostMs: 2_000,
+    metadataFetchMs: 4_000,
+    jwksFetchMs: 4_000,
+  },
+});
+
+if (!result.ok) {
+  if (result.error.code === "REQUEST_ABORTED") {
+    // The caller cancelled verification.
+  } else if (result.error.code === "REQUEST_TIMEOUT") {
+    // The overall or active operation deadline expired.
+  }
+}
 ```
 
 `verifyEmailToken()` needs four values:
