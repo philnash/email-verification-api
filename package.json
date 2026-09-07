@@ -1,6 +1,6 @@
 {
   "name": "email-verification-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Verify Email Verification Protocol EVT+KB tokens",
   "type": "module",
   "license": "MIT",
