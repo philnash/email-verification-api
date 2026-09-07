@@ -1,5 +1,8 @@
 # 📧 ✅ Email Verification API for Node.js
 
+[![npm version](https://img.shields.io/npm/v/email-verification-api.svg)](https://www.npmjs.com/package/email-verification-api)
+[![CI](https://github.com/philnash/email-verification-api/actions/workflows/ci.yml/badge.svg)](https://github.com/philnash/email-verification-api/actions/workflows/ci.yml)
+
 The [Email Verification API](https://github.com/WICG/email-verification) is a proposed standard to help users verify their email addresses without having to send one time passwords (OTPs) or magic links.
 
 Instead, the browser will use a user's logged in session to their inbox to create a cryptographically signed token that a server can use to verify the email address.
