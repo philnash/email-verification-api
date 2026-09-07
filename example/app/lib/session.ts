@@ -37,7 +37,7 @@ export async function encryptSession(payload: SessionPayload) {
  * missing, expired, or has been tampered with.
  */
 export async function decryptSession(
-  sessionCookieValue: string | undefined
+  sessionCookieValue: string | undefined,
 ): Promise<SessionPayload | null> {
   if (!sessionCookieValue) {
     return null;

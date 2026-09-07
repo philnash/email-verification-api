@@ -16,8 +16,13 @@
 }
 
 @theme inline {
-  --font-sans: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
-  --font-mono: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", "Oxygen Mono", "Ubuntu Mono", "Source Code Pro", "Fira Mono", "Droid Sans Mono", "Consolas", "Courier New", monospace;
+  --font-sans:
+    system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --font-mono:
+    ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
+    "Roboto Mono", "Oxygen Mono", "Ubuntu Mono", "Source Code Pro", "Fira Mono",
+    "Droid Sans Mono", "Consolas", "Courier New", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -99,7 +104,7 @@ a:hover {
 
 .page footer {
   max-width: 32rem;
-  width:100%;
+  width: 100%;
   margin: 0 auto;
   padding: 1em 0;
 }
@@ -176,7 +181,10 @@ button {
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 button:hover:not(:disabled) {

@@ -2,9 +2,7 @@
 
 import { useId, useState } from "react";
 
-type VerifyResult =
-  | { verified: true }
-  | { verified: false; reason: string };
+type VerifyResult = { verified: true } | { verified: false; reason: string };
 
 type Status = "idle" | "submitting" | "done";
 
@@ -30,7 +28,8 @@ export function VerifyForm({ nonce }: { nonce: string }) {
     } catch {
       setResult({
         verified: false,
-        reason: "Something went wrong while checking your email. Please try again.",
+        reason:
+          "Something went wrong while checking your email. Please try again.",
       });
     } finally {
       setStatus("done");
@@ -73,7 +72,9 @@ export function VerifyForm({ nonce }: { nonce: string }) {
           <span className="result--verified">✓ Email verified.</span>
         )}
         {result && !result.verified && (
-          <span className="result--not-verified">✗ Not verified: {result.reason}</span>
+          <span className="result--not-verified">
+            ✗ Not verified: {result.reason}
+          </span>
         )}
       </p>
     </div>
