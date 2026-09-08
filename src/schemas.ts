@@ -244,6 +244,7 @@ export const DnsVerifiedTokenSchema = z.object({
 });
 
 export const IssuerMetadataSchema = z.looseObject({
+  issuer: z.url(),
   issuance_endpoint: z.url(),
   jwks_uri: z.url(),
   signing_alg_values_supported: z

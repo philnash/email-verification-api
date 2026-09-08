@@ -38,6 +38,7 @@ function jsonResponse(value: unknown, status = 200): Response {
 
 function metadata(overrides: Record<string, unknown> = {}) {
   return {
+    issuer: "https://accounts.example.com",
     issuance_endpoint: "https://accounts.example.com/email-verification/issue",
     jwks_uri: jwksUrl,
     signing_alg_values_supported: ["EdDSA"],

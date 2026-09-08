@@ -61,6 +61,7 @@ function metadata(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
+    issuer: "https://accounts.example.com",
     issuance_endpoint: "https://accounts.example.com/email-verification/issue",
     jwks_uri: jwksUrl,
     signing_alg_values_supported: ["EdDSA"],
@@ -1037,6 +1038,22 @@ void describe("verifyIssuerSignature", () => {
       assertIssuerError(result, "METADATA_INVALID");
       assert.deepEqual(network.calls, [metadataUrl]);
     }
+  });
+
+  void it("rejects metadata if the declared issuer does not match the identity of the fetched host", async () => {
+    const { fixture, token } = await createDnsVerifiedFixture();
+    const network = createFetchFixture({
+      [metadataUrl]: () => jsonResponse(metadata({ issuer: "https://imposter-issuer.com" })),
+      [jwksUrl]: () => jsonResponse({ keys: [fixture.issuerPublicJwk] }),
+    });
+
+    const result = await verifyIssuerSignature({
+      token,
+      fetch: network.fetch,
+    });
+
+    assertIssuerError(result, "METADATA_INVALID");
+    assert.deepEqual(network.calls, [metadataUrl]);
   });
 
   void it("requires safe HTTPS metadata endpoints", async () => {
