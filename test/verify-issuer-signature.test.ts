@@ -1043,7 +1043,8 @@ void describe("verifyIssuerSignature", () => {
   void it("rejects metadata if the declared issuer does not match the identity of the fetched host", async () => {
     const { fixture, token } = await createDnsVerifiedFixture();
     const network = createFetchFixture({
-      [metadataUrl]: () => jsonResponse(metadata({ issuer: "https://imposter-issuer.com" })),
+      [metadataUrl]: () =>
+        jsonResponse(metadata({ issuer: "https://imposter-issuer.com" })),
       [jwksUrl]: () => jsonResponse({ keys: [fixture.issuerPublicJwk] }),
     });
 
