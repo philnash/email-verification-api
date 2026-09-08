@@ -159,7 +159,7 @@ export async function verifyIssuerSignatureWithControl(
   });
   if (!metadataDocument.ok) return metadataDocument;
 
-  const metadataResult = parseMetadata(metadataDocument.value);
+  const metadataResult = parseMetadata(metadataDocument.value, token.issuer);
   const metadataInterruption = checkInterruption(control);
   if (metadataInterruption !== undefined) {
     return interruptionResult(
@@ -400,7 +400,10 @@ async function fetchJsonDocument({
   return controlled.value;
 }
 
-function parseMetadata(value: unknown): Result<IssuerMetadata> {
+function parseMetadata(
+  value: unknown,
+  expectedIssuerHost: string,
+): Result<IssuerMetadata> {
   let result: z.ZodSafeParseResult<IssuerMetadata>;
   try {
     result = IssuerMetadataSchema.safeParse(value);
@@ -415,6 +418,13 @@ function parseMetadata(value: unknown): Result<IssuerMetadata> {
     return issuerError(
       "METADATA_INVALID",
       "Issuer metadata does not match the required schema.",
+    );
+  }
+
+  if (result.data.issuer !== `https://${expectedIssuerHost}`) {
+    return issuerError(
+      "METADATA_INVALID",
+      "The metadata issuer property does not match the identity of the issuer.",
     );
   }
 
